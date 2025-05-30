@@ -4,15 +4,16 @@
   "description": "Backend para o BDownload",
   "main": "server.js",
   "scripts": {
-    "start": "./setup.sh"
- "dev": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js",
+    "setup": "./setup.sh"
   },
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
-    "yt-dlp-exec": "^2.0.0"  # (Opcional) Alternativa ao `exec` nativo
+    "yt-dlp-exec": "^2.0.0"
   },
   "engines": {
-    "node": ">=18.x"         # Versão do Node.js necessária
+    "node": ">=18.x"
   }
 }
