@@ -1,3 +1,6 @@
+// ================================
+// BACKEND - server.js (Node.js + Express + yt-dlp)
+// ================================
 const express = require('express');
 const cors = require('cors');
 const { exec } = require('child_process');
@@ -8,39 +11,31 @@ const PORT = process.env.PORT || 3000;
 app.use(cors({ origin: ['https://joaopaulo55.github.io'] }));
 app.use(express.json());
 
-// Rota para obter informações e formatos do vídeo
+// Obtem formatos do vídeo
 app.post('/formats', (req, res) => {
   const { url } = req.body;
-
   if (!url) return res.status(400).json({ error: 'URL não fornecida' });
 
-  exec(`yt-dlp -J --no-playlist "${url}"`, (err, stdout, stderr) => {
-    if (err) {
-      console.error('Erro yt-dlp:', stderr || err);
-      return res.status(500).json({ 
-        error: 'Erro ao obter informações do vídeo',
-        details: stderr || err.message 
-      });
-    }
-
+  exec(`yt-dlp -J --no-playlist "${url}"`, (err, stdout) => {
+    if (err) return res.status(500).json({ error: 'Erro ao obter informações do vídeo' });
     try {
       const data = JSON.parse(stdout);
       const formats = data.formats
-        .filter(f => f.filesize && (f.ext === 'mp4' || f.ext === 'webm' || f.ext === 'm4a' || f.vcodec || f.acodec))
+        .filter(f => f.format_id && (f.ext === 'mp4' || f.ext === 'webm' || f.ext === 'm4a'))
         .map(f => ({
           id: f.format_id,
-          resolution: f.resolution || (f.height ? f.height + 'p' : 'Áudio') || 'Desconhecido',
+          resolution: f.resolution || `${f.height || 'audio'}p`,
           ext: f.ext,
-          acodec: f.acodec || 'none',
-          vcodec: f.vcodec || 'none'
+          acodec: f.acodec,
+          vcodec: f.vcodec
         }));
 
-      if (formats.length === 0) {
-        return res.status(404).json({ 
-          error: 'Nenhum formato disponível encontrado',
-          available_formats: data.formats.map(f => f.ext)
-        });
-      }
+      if (!formats.length) return res.json({
+        title: data.title,
+        thumbnail: data.thumbnail,
+        duration: data.duration,
+        message: 'Nenhum formato disponível para download'
+      });
 
       res.json({
         title: data.title,
@@ -48,49 +43,32 @@ app.post('/formats', (req, res) => {
         duration: data.duration,
         formats
       });
-
-    } catch (parseErr) {
-      console.error('Erro ao processar JSON:', parseErr);
-      res.status(500).json({ 
-        error: 'Erro ao processar dados do vídeo',
-        details: parseErr.message 
-      });
+    } catch (e) {
+      res.status(500).json({ error: 'Erro ao processar resposta do yt-dlp' });
     }
   });
 });
 
-// Rota para obter URL direta de download
+// Gera link de download
 app.post('/download', (req, res) => {
   const { url, format } = req.body;
-
   if (!url || !format) return res.status(400).json({ error: 'URL ou formato ausente' });
 
-  const cmd = `yt-dlp -f ${format} -g --no-playlist "${url}"`;
-
-  exec(cmd, (err, stdout, stderr) => {
-    if (err) {
-      console.error('Erro yt-dlp:', stderr || err);
-      return res.status(500).json({ 
-        error: 'Erro ao gerar link de download',
-        details: stderr || err.message 
-      });
-    }
-
+  exec(`yt-dlp -f ${format} -g --no-playlist "${url}"`, (err, stdout) => {
+    if (err) return res.status(500).json({ error: 'Erro ao gerar link de download' });
     const directUrl = stdout.trim().split('\n').pop();
+    if (!directUrl) return res.status(500).json({ error: 'Link não encontrado' });
     res.json({ downloadUrl: directUrl });
   });
 });
 
 // Health check
 app.get('/health', (req, res) => {
-  exec('yt-dlp --version', (err, stdout, stderr) => {
-    res.status(err ? 500 : 200).json({
-      status: err ? 'unhealthy' : 'healthy',
-      ytDlp: err ? 'not available' : 'available',
-      version: stdout || undefined,
-      error: err ? stderr || err.message : undefined
-    });
+  exec('yt-dlp --version', (err) => {
+    res.status(err ? 500 : 200).json({ status: err ? 'unhealthy' : 'healthy' });
   });
 });
 
 app.listen(PORT, () => console.log(`Servidor pronto na porta ${PORT}`));
+
+
