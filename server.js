@@ -14,23 +14,33 @@ app.post('/formats', (req, res) => {
 
   if (!url) return res.status(400).json({ error: 'URL não fornecida' });
 
-  exec(`yt-dlp -J --no-playlist "${url}"`, (err, stdout) => {
+  exec(`yt-dlp -J --no-playlist "${url}"`, (err, stdout, stderr) => {
     if (err) {
-      console.error('Erro yt-dlp:', err);
-      return res.status(500).json({ error: 'Erro ao obter informações do vídeo' });
+      console.error('Erro yt-dlp:', stderr || err);
+      return res.status(500).json({ 
+        error: 'Erro ao obter informações do vídeo',
+        details: stderr || err.message 
+      });
     }
 
     try {
       const data = JSON.parse(stdout);
       const formats = data.formats
-        .filter(f => f.filesize && (f.ext === 'mp4' || f.ext === 'webm' || f.ext === 'm4a'))
+        .filter(f => f.filesize && (f.ext === 'mp4' || f.ext === 'webm' || f.ext === 'm4a' || f.vcodec || f.acodec))
         .map(f => ({
           id: f.format_id,
-          resolution: f.resolution || f.height + 'p' || 'Áudio',
+          resolution: f.resolution || (f.height ? f.height + 'p' : 'Áudio') || 'Desconhecido',
           ext: f.ext,
-          acodec: f.acodec,
-          vcodec: f.vcodec
+          acodec: f.acodec || 'none',
+          vcodec: f.vcodec || 'none'
         }));
+
+      if (formats.length === 0) {
+        return res.status(404).json({ 
+          error: 'Nenhum formato disponível encontrado',
+          available_formats: data.formats.map(f => f.ext)
+        });
+      }
 
       res.json({
         title: data.title,
@@ -41,7 +51,10 @@ app.post('/formats', (req, res) => {
 
     } catch (parseErr) {
       console.error('Erro ao processar JSON:', parseErr);
-      res.status(500).json({ error: 'Erro ao processar dados do vídeo' });
+      res.status(500).json({ 
+        error: 'Erro ao processar dados do vídeo',
+        details: parseErr.message 
+      });
     }
   });
 });
@@ -54,23 +67,28 @@ app.post('/download', (req, res) => {
 
   const cmd = `yt-dlp -f ${format} -g --no-playlist "${url}"`;
 
-  exec(cmd, (err, stdout) => {
+  exec(cmd, (err, stdout, stderr) => {
     if (err) {
-      console.error('Erro yt-dlp:', err);
-      return res.status(500).json({ error: 'Erro ao gerar link de download' });
+      console.error('Erro yt-dlp:', stderr || err);
+      return res.status(500).json({ 
+        error: 'Erro ao gerar link de download',
+        details: stderr || err.message 
+      });
     }
 
-    const directUrl = stdout.trim().split('\n').pop(); // para áudio + vídeo, podem vir 2 URLs
+    const directUrl = stdout.trim().split('\n').pop();
     res.json({ downloadUrl: directUrl });
   });
 });
 
 // Health check
 app.get('/health', (req, res) => {
-  exec('yt-dlp --version', (err) => {
+  exec('yt-dlp --version', (err, stdout, stderr) => {
     res.status(err ? 500 : 200).json({
       status: err ? 'unhealthy' : 'healthy',
-      ytDlp: err ? 'not available' : 'available'
+      ytDlp: err ? 'not available' : 'available',
+      version: stdout || undefined,
+      error: err ? stderr || err.message : undefined
     });
   });
 });
