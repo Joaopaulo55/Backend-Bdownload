@@ -4,19 +4,23 @@
 const express = require('express');
 const cors = require('cors');
 const { exec } = require('child_process');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Configuração do cookies.txt
+const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
+
 app.use(cors({ origin: ['https://joaopaulo55.github.io'] }));
 app.use(express.json());
 
-// Obtem formatos do vídeo
+// Obtem formatos do vídeo (com cookies)
 app.post('/formats', (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL não fornecida' });
 
-  exec(`yt-dlp -J --no-playlist "${url}"`, (err, stdout) => {
+  exec(`yt-dlp --cookies ${COOKIES_PATH} -J --no-playlist "${url}"`, (err, stdout) => {
     if (err) return res.status(500).json({ error: 'Erro ao obter informações do vídeo' });
     try {
       const data = JSON.parse(stdout);
@@ -49,12 +53,12 @@ app.post('/formats', (req, res) => {
   });
 });
 
-// Gera link de download
+// Gera link de download (com cookies)
 app.post('/download', (req, res) => {
   const { url, format } = req.body;
   if (!url || !format) return res.status(400).json({ error: 'URL ou formato ausente' });
 
-  exec(`yt-dlp -f ${format} -g --no-playlist "${url}"`, (err, stdout) => {
+  exec(`yt-dlp --cookies ${COOKIES_PATH} -f ${format} -g --no-playlist "${url}"`, (err, stdout) => {
     if (err) return res.status(500).json({ error: 'Erro ao gerar link de download' });
     const directUrl = stdout.trim().split('\n').pop();
     if (!directUrl) return res.status(500).json({ error: 'Link não encontrado' });
@@ -62,13 +66,11 @@ app.post('/download', (req, res) => {
   });
 });
 
-// Health check
+// Health check (atualizado para verificar cookies)
 app.get('/health', (req, res) => {
-  exec('yt-dlp --version', (err) => {
+  exec(`yt-dlp --cookies ${COOKIES_PATH} --version`, (err) => {
     res.status(err ? 500 : 200).json({ status: err ? 'unhealthy' : 'healthy' });
   });
 });
 
 app.listen(PORT, () => console.log(`Servidor pronto na porta ${PORT}`));
-
-
