@@ -1,80 +1,63 @@
-const express = require("express");
-const cors = require("cors");
-const { exec } = require("child_process");
+const express = require('express');
+const cors = require('cors');
+const { exec } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configuração do CORS
-app.use(cors({
-  origin: ['https://joaopaulo55.github.io', 'http://localhost:3000']
-}));
-
+// Configurações essenciais
+app.use(cors({ origin: ['https://joaopaulo55.github.io'] }));
 app.use(express.json());
 
-// Middleware para verificar o yt-dlp
-app.use((req, res, next) => {
-  exec('yt-dlp --version', (error) => {
-    if (error) {
-      console.error('yt-dlp não está disponível');
-      return res.status(500).json({ 
-        error: "Serviço temporariamente indisponível",
-        details: "O servidor está sendo configurado. Tente novamente em alguns instantes."
-      });
-    }
-    next();
-  });
-});
-
-// Rota de download aprimorada
-app.post("/download", (req, res) => {
-  const { url } = req.body;
-  
-  if (!url || !url.includes('youtu')) {
-    return res.status(400).json({ 
-      error: "URL inválida",
-      solution: "Forneça uma URL válida do YouTube"
-    });
-  }
-
-  const sanitizedUrl = url.replace(/[;&|$<>]/g, "");
-  const cmd = `yt-dlp --dump-json --no-playlist "${sanitizedUrl}"`;
-
-  exec(cmd, { timeout: 15000 }, (err, stdout, stderr) => {
-    if (err) {
-      console.error(`Erro no yt-dlp: ${stderr}`);
-      return res.status(500).json({
-        error: "Não foi possível processar o vídeo",
-        common_fixes: [
-          "Verifique se a URL está correta",
-          "O vídeo pode estar restrito"
-        ],
-        technical_details: stderr.toString()
-      });
+// Rota direta de download
+app.post('/download', async (req, res) => {
+  try {
+    const { url } = req.body;
+    
+    // Validação básica
+    if (!url?.includes('youtu')) {
+      return res.status(400).json({ error: 'URL do YouTube inválida' });
     }
 
-    try {
-      const info = JSON.parse(stdout);
-      const safeTitle = info.title.replace(/[^a-zA-Z0-9]/g, '_');
+    // Nome do arquivo seguro
+    const filename = `video_${Date.now()}.mp4`;
+    
+    // Comando otimizado
+    const cmd = `yt-dlp -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' -o ${filename} --no-playlist "${url.replace(/[;&|$]/g, '')}"`;
+    
+    // Stream direto para o navegador
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    exec(cmd, { timeout: 60000 }, (err, stdout, stderr) => {
+      if (err) {
+        console.error('Erro no download:', stderr);
+        return res.status(500).json({ 
+          error: 'Erro ao baixar vídeo',
+          solution: 'Tente novamente ou use outro vídeo'
+        });
+      }
       
-      res.json({
-        title: info.title,
-        formats: info.formats.map(f => ({
-          id: f.format_id,
-          quality: f.resolution || 'audio',
-          ext: f.ext
-        }))
+      // Envia o arquivo diretamente
+      res.sendFile(filename, { root: __dirname }, (err) => {
+        if (err) console.error('Erro ao enviar arquivo:', err);
+        // Limpeza
+        exec(`rm -f ${filename}`);
       });
-    } catch (e) {
-      console.error('Erro ao parsear resposta:', e);
-      res.status(500).json({
-        error: "Resposta inesperada do servidor",
-        likely_cause: "Problema temporário com a plataforma de vídeo",
-        action: "Tente novamente ou use outro vídeo"
-      });
-    }
+    });
+
+  } catch (error) {
+    console.error('Erro inesperado:', error);
+    res.status(500).json({ error: 'Erro interno no servidor' });
+  }
+});
+
+// Health check simplificado
+app.get('/health', (req, res) => {
+  exec('yt-dlp --version', (err) => {
+    res.status(err ? 500 : 200).json({ 
+      status: err ? 'unhealthy' : 'healthy',
+      ytDlp: err ? 'not available' : 'available'
+    });
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Servidor pronto na porta ${PORT}`));
