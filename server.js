@@ -5,6 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const { exec } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,16 +13,45 @@ const PORT = process.env.PORT || 3000;
 // Configuração do cookies.txt
 const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
 
+// Sistema de logs
+let logs = [];
+
+function registrarLog(tipo, mensagem) {
+  const log = {
+    tipo, // info, erro, alerta
+    mensagem,
+    timestamp: new Date().toISOString()
+  };
+  logs.push(log);
+  if (logs.length > 200) logs.shift(); // evita uso excessivo de memória
+
+  // Salva em arquivo (opcional)
+  try {
+    fs.writeFileSync(path.join(__dirname, 'logs.json'), JSON.stringify(logs, null, 2));
+  } catch (e) {
+    console.error('Erro ao salvar logs:', e);
+  }
+}
+
 app.use(cors({ origin: ['https://joaopaulo55.github.io'] }));
 app.use(express.json());
 
 // Obtem formatos do vídeo (com cookies)
 app.post('/formats', (req, res) => {
   const { url } = req.body;
-  if (!url) return res.status(400).json({ error: 'URL não fornecida' });
+  if (!url) {
+    registrarLog('erro', 'URL não fornecida em /formats');
+    return res.status(400).json({ error: 'URL não fornecida' });
+  }
 
+  registrarLog('info', `Verificação de formatos para: ${url}`);
+  
   exec(`yt-dlp --cookies ${COOKIES_PATH} -J --no-playlist "${url}"`, (err, stdout) => {
-    if (err) return res.status(500).json({ error: 'Erro ao obter informações do vídeo' });
+    if (err) {
+      registrarLog('erro', `Falha ao obter formatos: ${err.message}`);
+      return res.status(500).json({ error: 'Erro ao obter informações do vídeo' });
+    }
+    
     try {
       const data = JSON.parse(stdout);
       const formats = data.formats
@@ -34,13 +64,17 @@ app.post('/formats', (req, res) => {
           vcodec: f.vcodec
         }));
 
-      if (!formats.length) return res.json({
-        title: data.title,
-        thumbnail: data.thumbnail,
-        duration: data.duration,
-        message: 'Nenhum formato disponível para download'
-      });
+      if (!formats.length) {
+        registrarLog('alerta', `Nenhum formato disponível para: ${url}`);
+        return res.json({
+          title: data.title,
+          thumbnail: data.thumbnail,
+          duration: data.duration,
+          message: 'Nenhum formato disponível para download'
+        });
+      }
 
+      registrarLog('info', `Formatos encontrados para: ${data.title}`);
       res.json({
         title: data.title,
         thumbnail: data.thumbnail,
@@ -48,6 +82,7 @@ app.post('/formats', (req, res) => {
         formats
       });
     } catch (e) {
+      registrarLog('erro', `Erro ao processar resposta do yt-dlp: ${e.message}`);
       res.status(500).json({ error: 'Erro ao processar resposta do yt-dlp' });
     }
   });
@@ -56,21 +91,44 @@ app.post('/formats', (req, res) => {
 // Gera link de download (com cookies)
 app.post('/download', (req, res) => {
   const { url, format } = req.body;
-  if (!url || !format) return res.status(400).json({ error: 'URL ou formato ausente' });
+  if (!url || !format) {
+    registrarLog('erro', 'URL ou formato ausente em /download');
+    return res.status(400).json({ error: 'URL ou formato ausente' });
+  }
 
+  registrarLog('info', `Solicitado download do formato ${format} para ${url}`);
+  
   exec(`yt-dlp --cookies ${COOKIES_PATH} -f ${format} -g --no-playlist "${url}"`, (err, stdout) => {
-    if (err) return res.status(500).json({ error: 'Erro ao gerar link de download' });
+    if (err) {
+      registrarLog('erro', `Falha ao gerar link de download: ${err.message}`);
+      return res.status(500).json({ error: 'Erro ao gerar link de download' });
+    }
+    
     const directUrl = stdout.trim().split('\n').pop();
-    if (!directUrl) return res.status(500).json({ error: 'Link não encontrado' });
+    if (!directUrl) {
+      registrarLog('erro', 'Link de download não encontrado');
+      return res.status(500).json({ error: 'Link não encontrado' });
+    }
+    
+    registrarLog('info', `Download gerado com sucesso para ${url}`);
     res.json({ downloadUrl: directUrl });
   });
 });
 
 // Health check (atualizado para verificar cookies)
-app.get('/health', (req, res) => {
+app.get('/status', (req, res) => {
   exec(`yt-dlp --cookies ${COOKIES_PATH} --version`, (err) => {
-    res.status(err ? 500 : 200).json({ status: err ? 'unhealthy' : 'healthy' });
+    registrarLog(err ? 'erro' : 'info', `Verificação de status executada`);
+    res.status(err ? 500 : 200).json({ status: err ? 'Offline ❌' : 'Online ✅' });
   });
 });
 
-app.listen(PORT, () => console.log(`Servidor pronto na porta ${PORT}`));
+// Endpoint para visualizar logs
+app.get('/logs', (req, res) => {
+  res.json(logs.slice(-100).reverse());
+});
+
+app.listen(PORT, () => {
+  registrarLog('info', `Servidor iniciado na porta ${PORT}`);
+  console.log(`Servidor pronto na porta ${PORT}`);
+});
