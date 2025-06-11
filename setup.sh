@@ -10,29 +10,63 @@ echo "🐍 Configurando Python..."
 python3 -m ensurepip --upgrade || echo "⚠️ Falha ao atualizar pip"
 python3 -m pip install --upgrade pip || echo "⚠️ Falha ao atualizar pip"
 
-# Instala yt-dlp (modificado para Render)
+# Instala yt-dlp
 echo "⬇️ Instalando yt-dlp..."
 if [ -n "$RENDER" ]; then
   # Ambiente Render - instala globalmente
-  python3 -m pip install yt-dlp || { echo "❌ Falha ao instalar yt-dlp"; exit 1; }
+  sudo python3 -m pip install yt-dlp || { 
+    echo "⚠️ Tentando instalação sem sudo..."
+    python3 -m pip install yt-dlp || { 
+      echo "❌ Falha crítica ao instalar yt-dlp"; 
+      exit 1; 
+    }
+  }
 else
   # Ambiente local - instala como usuário
-  python3 -m pip install --user yt-dlp || { echo "❌ Falha ao instalar yt-dlp"; exit 1; }
+  python3 -m pip install --user yt-dlp || { 
+    echo "❌ Falha ao instalar yt-dlp localmente"; 
+    exit 1; 
+  }
   export PATH="$PATH:$HOME/.local/bin"
 fi
 
 # Instala dependências do Node
 echo "📦 Instalando dependências do Node.js..."
-npm install || { echo "❌ Falha ao instalar dependências Node"; exit 1; }
+npm install --legacy-peer-deps || { 
+  echo "⚠️ Tentando instalação normal..."
+  npm install || { 
+    echo "❌ Falha ao instalar dependências Node"; 
+    exit 1; 
+  }
+}
 
-# Configura ffmpeg via ffmpeg-static
+# Configura ffmpeg (abordagem mais robusta)
 echo "⬇️ Configurando ffmpeg..."
-FFMPEG_PATH=$(npm bin)/ffmpeg-static
-if [ -f "$FFMPEG_PATH" ]; then
-  export PATH="$PATH:$FFMPEG_PATH"
-else
-  echo "⚠️ ffmpeg-static não encontrado, será usado o do sistema"
-fi
+try_ffmpeg() {
+  # Tenta usar o ffmpeg-static do npm
+  FFMPEG_PATH=$(npm root)/ffmpeg-static
+  if [ -f "$FFMPEG_PATH" ]; then
+    echo "✓ Usando ffmpeg-static do npm"
+    ln -s "$FFMPEG_PATH" /usr/local/bin/ffmpeg || true
+    return 0
+  fi
+  
+  # Tenta instalar via apt-get (se disponível)
+  if command -v apt-get &> /dev/null; then
+    echo "⚠️ Instalando ffmpeg via apt-get"
+    sudo apt-get update && sudo apt-get install -y ffmpeg && return 0
+  fi
+  
+  # Tenta usar qualquer ffmpeg disponível no sistema
+  if command -v ffmpeg &> /dev/null; then
+    echo "⚠️ Usando ffmpeg do sistema"
+    return 0
+  fi
+  
+  return 1
+}
+
+try_ffmpeg || echo "⚠️ ffmpeg não pôde ser configurado - alguns recursos podem não funcionar"
 
 # Cria arquivos necessários
 echo "📂 Criando arquivos de configuração..."
@@ -44,6 +78,7 @@ echo -n "Node: "; node -v || echo "❌ Node não instalado"
 echo -n "NPM: "; npm -v || echo "❌ NPM não instalado"
 echo -n "Python: "; python3 --version || echo "❌ Python não instalado"
 echo -n "yt-dlp: "; yt-dlp --version || echo "❌ yt-dlp não instalado"
-echo -n "ffmpeg: "; ffmpeg -version || echo "⚠️ ffmpeg será fornecido via ffmpeg-static"
+echo -n "ffmpeg: "; command -v ffmpeg && ffmpeg -version || echo "⚠️ ffmpeg não disponível"
 
 echo "🚀 Setup concluído com sucesso!"
+
