@@ -10,12 +10,16 @@ echo "🐍 Configurando Python..."
 python3 -m ensurepip --upgrade || echo "⚠️ Falha ao atualizar pip"
 python3 -m pip install --upgrade pip || echo "⚠️ Falha ao atualizar pip"
 
-# Instala yt-dlp (localmente)
+# Instala yt-dlp (modificado para Render)
 echo "⬇️ Instalando yt-dlp..."
-python3 -m pip install --user yt-dlp || { echo "❌ Falha ao instalar yt-dlp"; exit 1; }
-
-# Configura PATH para yt-dlp
-export PATH="$PATH:$HOME/.local/bin"
+if [ -n "$RENDER" ]; then
+  # Ambiente Render - instala globalmente
+  python3 -m pip install yt-dlp || { echo "❌ Falha ao instalar yt-dlp"; exit 1; }
+else
+  # Ambiente local - instala como usuário
+  python3 -m pip install --user yt-dlp || { echo "❌ Falha ao instalar yt-dlp"; exit 1; }
+  export PATH="$PATH:$HOME/.local/bin"
+fi
 
 # Instala dependências do Node
 echo "📦 Instalando dependências do Node.js..."
@@ -42,4 +46,4 @@ echo -n "Python: "; python3 --version || echo "❌ Python não instalado"
 echo -n "yt-dlp: "; yt-dlp --version || echo "❌ yt-dlp não instalado"
 echo -n "ffmpeg: "; ffmpeg -version || echo "⚠️ ffmpeg será fornecido via ffmpeg-static"
 
-echo "🚀 Setup concluído com sucesso no Render!"
+echo "🚀 Setup concluído com sucesso!"
