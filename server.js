@@ -8,6 +8,32 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const rateLimit = require('express-rate-limit');
+
+// Verificação de ambiente
+require('dotenv').config();
+const chalk = require('chalk');
+
+// Verificar todas as dependências no startup
+function checkDependencies() {
+  const requiredModules = [
+    'express', 'cors', 'axios', 'ffmpeg-static', 
+    'express-rate-limit', 'yt-dlp-exec'
+  ];
+
+  requiredModules.forEach(mod => {
+    try {
+      require.resolve(mod);
+    } catch (err) {
+      console.error(chalk.red.bold(`✗ Módulo ${mod} não encontrado`));
+      process.exit(1);
+    }
+  });
+
+  console.log(chalk.green.bold('✓ Todos os módulos Node.js estão disponíveis'));
+}
+
+checkDependencies();
+
 const app = express();
 
 const PORT = process.env.PORT || 3000;
