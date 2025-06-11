@@ -17,7 +17,7 @@ const chalk = require('chalk');
 function checkDependencies() {
   const requiredModules = [
     'express', 'cors', 'axios', 'ffmpeg-static', 
-    'express-rate-limit', 'yt-dlp-exec'
+    'express-rate-limit', 'chalk', 'dotenv'
   ];
 
   requiredModules.forEach(mod => {
@@ -39,7 +39,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
 const LOG_FILE = path.join(__dirname, 'logs.txt');
-const JPAINEL_ENDPOINT = 'https://jpainel-backend.onrender.com/api/logs';
+const JPAINEL_ENDPOINT = process.env.JPAINEL_ENDPOINT || '';
+
 
 // Configuração do rate limiting
 const limiter = rateLimit({

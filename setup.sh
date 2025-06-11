@@ -1,49 +1,45 @@
 #!/bin/bash
 
-echo "🔵 Iniciando setup do projeto..."
+echo "🔵 Iniciando setup do projeto no Render..."
 
-# Verifica se estamos no Render
-if [ -n "$RENDER" ]; then
-  echo "🔵 Ambiente Render.com detectado"
+# Configura ambiente
+set -e  # Exit immediately if a command exits with a non-zero status
 
-  # Configura Python/pip
-  echo "🐍 Configurando Python..."
-  python -m ensurepip --upgrade
-  pip install --upgrade pip
+# Configura Python/pip
+echo "🐍 Configurando Python..."
+python3 -m ensurepip --upgrade || echo "⚠️ Falha ao atualizar pip"
+python3 -m pip install --upgrade pip || echo "⚠️ Falha ao atualizar pip"
 
-  # Instala yt-dlp (localmente)
-  echo "⬇️ Instalando yt-dlp..."
-  pip install --user yt-dlp
+# Instala yt-dlp (localmente)
+echo "⬇️ Instalando yt-dlp..."
+python3 -m pip install --user yt-dlp || { echo "❌ Falha ao instalar yt-dlp"; exit 1; }
 
-  # Instala ffmpeg estático
-  echo "⬇️ Baixando ffmpeg estático..."
-  mkdir -p bin
-  wget https://github.com/eugeneware/ffmpeg-static/releases/download/b5.0.1/linux-x64 -O bin/ffmpeg
-  chmod +x bin/ffmpeg
-  export PATH="$PATH:$(pwd)/bin"
-
-else
-  # Ambiente local
-  echo "🔴 Ambiente local detectado"
-  sudo apt-get update -y
-  sudo apt-get install -y ffmpeg python3-pip
-  pip install yt-dlp
-fi
+# Configura PATH para yt-dlp
+export PATH="$PATH:$HOME/.local/bin"
 
 # Instala dependências do Node
 echo "📦 Instalando dependências do Node.js..."
-npm install
+npm install || { echo "❌ Falha ao instalar dependências Node"; exit 1; }
+
+# Configura ffmpeg via ffmpeg-static
+echo "⬇️ Configurando ffmpeg..."
+FFMPEG_PATH=$(npm bin)/ffmpeg-static
+if [ -f "$FFMPEG_PATH" ]; then
+  export PATH="$PATH:$FFMPEG_PATH"
+else
+  echo "⚠️ ffmpeg-static não encontrado, será usado o do sistema"
+fi
 
 # Cria arquivos necessários
 echo "📂 Criando arquivos de configuração..."
-touch logs.txt cookies.txt
+touch logs.txt cookies.txt || echo "⚠️ Falha ao criar arquivos"
 
 # Verifica instalações
 echo "✅ Verificando instalações:"
-node -v
-npm -v
-python3 --version
-yt-dlp --version
-./bin/ffmpeg -version 2>/dev/null || echo "ffmpeg não encontrado"
+echo -n "Node: "; node -v || echo "❌ Node não instalado"
+echo -n "NPM: "; npm -v || echo "❌ NPM não instalado"
+echo -n "Python: "; python3 --version || echo "❌ Python não instalado"
+echo -n "yt-dlp: "; yt-dlp --version || echo "❌ yt-dlp não instalado"
+echo -n "ffmpeg: "; ffmpeg -version || echo "⚠️ ffmpeg será fornecido via ffmpeg-static"
 
-echo "🚀 Setup concluído com sucesso!"
+echo "🚀 Setup concluído com sucesso no Render!"
