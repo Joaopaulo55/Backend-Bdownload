@@ -36,7 +36,7 @@ app.use(limiter); // Aplica rate limiting a todas as rotas
 
 let logs = [];
 
-// Funções ausentes adicionadas
+// Funções auxiliares
 function validarCookies() {
   try {
     if (!fs.existsSync(COOKIES_PATH)) return false;
@@ -57,46 +57,36 @@ function spoofHeaders() {
   };
 }
 
-// Sistema de logs melhorado com rotação
 function registrarLog(tipo, mensagem, extra = '', ip = '') {
   const timestamp = new Date().toISOString();
   const logEntry = { tipo, mensagem, extra, timestamp, ip };
   
-  // Limita o tamanho do array de logs
-  if (logs.length >= 1000) {
-    logs = logs.slice(-900); // Mantém os 900 mais recentes e adiciona mais 100
-  }
+  if (logs.length >= 1000) logs = logs.slice(-900);
   logs.push(logEntry);
 
   const entry = `[${timestamp}] [${tipo}] IP:${ip} ${mensagem}${extra ? ' - ' + extra : ''}\n`;
   
-  // Rotaciona o arquivo de log se ficar muito grande (>10MB)
   try {
     const stats = fs.existsSync(LOG_FILE) ? fs.statSync(LOG_FILE) : { size: 0 };
-    if (stats.size > 10 * 1024 * 1024) {
-      fs.renameSync(LOG_FILE, `${LOG_FILE}.old`);
-    }
+    if (stats.size > 10 * 1024 * 1024) fs.renameSync(LOG_FILE, `${LOG_FILE}.old`);
     fs.appendFileSync(LOG_FILE, entry);
   } catch (err) {
     console.error('Erro ao escrever log:', err);
   }
 
-  // Envio assíncrono para endpoint externo
   if (JPAINEL_ENDPOINT) {
     axios.post(JPAINEL_ENDPOINT, logEntry, { timeout: 3000 })
       .catch(err => console.error('Erro ao enviar log:', err.message));
   }
 }
 
-// Verificador de dependências com cache
+// Verificador de dependências
 let dependenciasCache = null;
 let ultimaVerificacao = 0;
 
 function verificarDependencias() {
   const agora = Date.now();
-  if (dependenciasCache && agora - ultimaVerificacao < 60000) {
-    return dependenciasCache; // Retorna cache se ainda for recente (<1 min)
-  }
+  if (dependenciasCache && agora - ultimaVerificacao < 60000) return dependenciasCache;
 
   try {
     const dependencias = {
@@ -115,19 +105,17 @@ function verificarDependencias() {
   }
 }
 
-// Middleware de segurança melhorado
+// Middlewares
 app.use((req, res, next) => {
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   req.clientIp = ip;
   
-  // Validação básica de URL para prevenir SSRF
   if (req.body.url && !req.body.url.match(/^https?:\/\/[^\s/$.?#].[^\s]*$/i)) {
     return res.status(400).json({ error: 'URL inválida' });
   }
 
   registrarLog('ACESSO', `[${req.method}] ${req.path}`, '', ip);
   
-  // Headers de segurança
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -135,25 +123,22 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rota de verificação de saúde
+// Rotas
 app.get('/health', (req, res) => {
   const start = Date.now();
-  const status = {
+  res.json({
     status: 'OK',
     uptime: process.uptime(),
     memoryUsage: process.memoryUsage(),
     dependencias: verificarDependencias(),
     responseTime: `${Date.now() - start}ms`
-  };
-  res.json(status);
+  });
 });
 
-// Rota para verificar dependências
 app.get('/deps', (req, res) => {
   res.json(verificarDependencias());
 });
 
-// Validador de URL
 function validarURL(url) {
   try {
     const parsed = new URL(url);
@@ -163,7 +148,6 @@ function validarURL(url) {
   }
 }
 
-// Rota /formats com melhor tratamento de erros
 app.post('/formats', async (req, res) => {
   try {
     const { url } = req.body;
@@ -202,20 +186,18 @@ app.post('/formats', async (req, res) => {
     }
 
     const data = JSON.parse(output);
-    const formats = (data.formats || []).map(f => ({
-      id: f.format_id,
-      resolution: f.resolution || `${f.height || 'audio'}p`,
-      ext: f.ext,
-      acodec: f.acodec,
-      vcodec: f.vcodec,
-      filesize: f.filesize
-    })).filter(f => f.id);
-
     res.json({
       title: data.title,
       thumbnail: data.thumbnail,
       duration: data.duration,
-      formats,
+      formats: (data.formats || []).map(f => ({
+        id: f.format_id,
+        resolution: f.resolution || `${f.height || 'audio'}p`,
+        ext: f.ext,
+        acodec: f.acodec,
+        vcodec: f.vcodec,
+        filesize: f.filesize
+      })).filter(f => f.id),
       cookies: cookiesValidos ? 'válidos' : 'inválidos'
     });
   } catch (err) {
@@ -224,12 +206,11 @@ app.post('/formats', async (req, res) => {
   }
 });
 
-// Rota /download melhorada
 app.post('/download', (req, res) => {
   try {
     const { url, format } = req.body;
     
-    if (!url || !validarURL(url) {
+    if (!url || !validarURL(url)) {  // CORREÇÃO: Parêntese faltando
       return res.status(400).json({ error: 'URL inválida ou não fornecida' });
     }
 
@@ -249,7 +230,7 @@ app.post('/download', (req, res) => {
       }
       
       const links = stdout.trim().split('\n');
-      const link = links[links.length - 1]; // Pega o último link (para vídeos com áudio separado)
+      const link = links[links.length - 1];
       
       if (!link || !validarURL(link)) {
         registrarLog('ERRO', 'Link de download inválido', stdout, req.clientIp);
@@ -265,7 +246,7 @@ app.post('/download', (req, res) => {
   }
 });
 
-// Error handling centralizado
+// Error handling
 app.use((err, req, res, next) => {
   registrarLog('ERRO', 'Erro não tratado', err.stack, req.clientIp);
   res.status(500).json({ 
@@ -275,15 +256,13 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Rota não encontrada
 app.use((req, res) => {
   res.status(404).json({ error: 'Rota não encontrada' });
 });
 
-// Inicialização segura
+// Inicialização
 function iniciarServidor() {
   try {
-    // Verifica dependências críticas antes de iniciar
     const deps = verificarDependencias();
     if (deps.status === 'ERRO') {
       console.error('Erro nas dependências:', deps.error);
@@ -295,17 +274,10 @@ function iniciarServidor() {
       console.log(`Servidor ativo na porta ${PORT}`);
     });
 
-    // Graceful shutdown
     const shutdown = (signal) => {
       registrarLog('SHUTDOWN', `Recebido ${signal} - Encerrando`);
-      server.close(() => {
-        process.exit(0);
-      });
-      
-      setTimeout(() => {
-        console.error('Forçando encerramento...');
-        process.exit(1);
-      }, 5000);
+      server.close(() => process.exit(0));
+      setTimeout(() => process.exit(1), 5000);
     };
 
     process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -318,5 +290,4 @@ function iniciarServidor() {
   }
 }
 
-// Inicia o servidor
 iniciarServidor();
