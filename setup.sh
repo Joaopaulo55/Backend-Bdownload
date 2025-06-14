@@ -30,7 +30,7 @@ else
   export PATH="$PATH:$HOME/.local/bin"
 fi
 
-# Instala dependências do Node
+# Instala dependências do Node (com fallbacks robustos)
 echo "📦 Instalando dependências do Node.js..."
 npm install --legacy-peer-deps || { 
   echo "⚠️ Tentando instalação normal..."
@@ -39,6 +39,16 @@ npm install --legacy-peer-deps || {
     exit 1; 
   }
 }
+
+# Verifica se o cheerio está instalado
+echo "🔍 Verificando se o cheerio está instalado..."
+if ! npm list cheerio > /dev/null 2>&1; then
+  echo "⚠️ cheerio não encontrado. Instalando manualmente..."
+  npm install cheerio@latest --save || {
+    echo "❌ Falha ao instalar cheerio";
+    exit 1;
+  }
+fi
 
 # Configura ffmpeg (abordagem mais robusta)
 echo "⬇️ Configurando ffmpeg..."
@@ -79,6 +89,6 @@ echo -n "NPM: "; npm -v || echo "❌ NPM não instalado"
 echo -n "Python: "; python3 --version || echo "❌ Python não instalado"
 echo -n "yt-dlp: "; yt-dlp --version || echo "❌ yt-dlp não instalado"
 echo -n "ffmpeg: "; command -v ffmpeg && ffmpeg -version || echo "⚠️ ffmpeg não disponível"
+echo -n "Cheerio: "; npm list cheerio > /dev/null && echo "✓" || echo "❌"
 
 echo "🚀 Setup concluído com sucesso!"
-
