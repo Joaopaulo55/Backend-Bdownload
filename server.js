@@ -1,5 +1,5 @@
 // ================================
-// BACKEND - server.js (Versão Corrigida)
+// BACKEND - server.js (Versão Atualizada)
 // ================================
 const express = require('express');
 const cors = require('cors');
@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const rateLimit = require('express-rate-limit');
+const cheerio = require('cheerio');
 
 // Verificação de ambiente
 require('dotenv').config();
@@ -17,7 +18,7 @@ const chalk = require('chalk');
 function checkDependencies() {
   const requiredModules = [
     'express', 'cors', 'axios', 'ffmpeg-static', 
-    'express-rate-limit', 'chalk', 'dotenv'
+    'express-rate-limit', 'chalk', 'dotenv', 'cheerio'
   ];
 
   requiredModules.forEach(mod => {
@@ -40,7 +41,6 @@ const PORT = process.env.PORT || 3000;
 const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
 const LOG_FILE = path.join(__dirname, 'logs.txt');
 const JPAINEL_ENDPOINT = process.env.JPAINEL_ENDPOINT || '';
-
 
 // Configuração do rate limiting
 const limiter = rateLimit({
@@ -286,6 +286,104 @@ app.use((err, req, res, next) => {
 app.use((req, res) => {
   res.status(404).json({ error: 'Rota não encontrada' });
 });
+
+
+// ================================
+// APIs de Busca de Vídeos
+// ================================
+
+// Função de busca no YouTube
+async function buscarYoutube(termo) {
+  try {
+    const apiKey = process.env.YT_API_KEY;
+    if (!apiKey) throw new Error('API Key do YouTube não configurada');
+    
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(termo)}&type=video&key=${apiKey}&maxResults=5`;
+    const res = await axios.get(url);
+    
+    return res.data.items.map(video => ({
+      plataforma: 'YouTube',
+      titulo: video.snippet.title,
+      thumb: video.snippet.thumbnails.high.url,
+      videoId: video.id.videoId,
+      url: `https://www.youtube.com/watch?v=${video.id.videoId}`,
+      canal: video.snippet.channelTitle,
+      duracao: '--:--' // A duração requer outra chamada à API
+    }));
+  } catch (error) {
+    registrarLog('ERRO', 'Falha na busca do YouTube', error.message);
+    return [];
+  }
+}
+
+// Função de busca no Vimeo
+async function buscarVimeo(termo) {
+  try {
+    const accessToken = process.env.VIMEO_TOKEN;
+    if (!accessToken) throw new Error('Token do Vimeo não configurado');
+    
+    const res = await axios.get(`https://api.vimeo.com/videos?query=${encodeURIComponent(termo)}&per_page=5`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    return res.data.data.map(video => ({
+      plataforma: 'Vimeo',
+      titulo: video.name,
+      thumb: video.pictures.sizes[3].link, // Pegando thumbnail média
+      url: video.link,
+      canal: video.user.name,
+      duracao: formatarDuracao(video.duration)
+    }));
+  } catch (error) {
+    registrarLog('ERRO', 'Falha na busca do Vimeo', error.message);
+    return [];
+  }
+}
+
+// Função auxiliar para formatar duração
+function formatarDuracao(segundos) {
+  const minutos = Math.floor(segundos / 60);
+  const segs = Math.floor(segundos % 60);
+  return `${minutos}:${segs < 10 ? '0' + segs : segs}`;
+}
+
+// Busca unificada
+app.get('/buscar', async (req, res) => {
+  const termo = req.query.q;
+  const plataforma = req.query.platform || 'all';
+  
+  if (!termo || termo.length < 3) {
+    return res.status(400).json({ erro: 'Termo de busca muito curto' });
+  }
+
+  try {
+    let resultados = [];
+    
+    // Busca no YouTube se for 'all' ou 'youtube'
+    if (plataforma === 'all' || plataforma === 'youtube') {
+      const youtubeResults = await buscarYoutube(termo);
+      resultados.push(...youtubeResults);
+    }
+    
+    // Busca no Vimeo se for 'all' ou 'vimeo'
+    if (plataforma === 'all' || plataforma === 'vimeo') {
+      const vimeoResults = await buscarVimeo(termo);
+      resultados.push(...vimeoResults);
+    }
+    
+    // Limitar a 10 resultados no máximo
+    resultados = resultados.slice(0, 10);
+    
+    res.json({ resultados });
+    
+  } catch (error) {
+    registrarLog('ERRO', 'Falha na busca unificada', error.message);
+    res.status(500).json({ erro: 'Erro ao buscar vídeos', detalhes: error.message });
+  }
+});
+
 
 // Inicialização
 function iniciarServidor() {
