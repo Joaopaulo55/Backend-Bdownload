@@ -50,7 +50,11 @@ const limiter = rateLimit({
 
 // Configurações melhoradas de CORS
 const corsOptions = {
-  origin: ['https://joaopaulo55.github.io', 'https://joaopaulo55.github.io/Jpainel'],
+  origin: [
+    'https://joaopaulo55.github.io', 
+    'https://joaopaulo55.github.io/Jpainel',
+    'https://bdownload.netlify.app'
+  ],
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   optionsSuccessStatus: 200
