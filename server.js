@@ -252,7 +252,7 @@ app.post('/download', (req, res) => {
     const cookiesValidos = validarCookies();
     const cookiesParam = cookiesValidos ? `--cookies "${COOKIES_PATH}"` : '';
     const userAgent = spoofHeaders()['User-Agent'];
-    const comando = `yt-dlp -f ${format} -g --no-playlist ${cookiesParam} --user-agent "${userAgent}" "${url}"`;
+    const comando = `yt-dlp -f ${format} -g --no-playlist --force-ipv4 --no-cache-dir --retries 3 --fragment-retries 2 --user-agent "${userAgent}" ${cookiesValidos ? `--cookies "${COOKIES_PATH}"` : ''} "${url}"`;
 
     exec(comando, { timeout: 30000 }, (err, stdout, stderr) => {
       if (err) {
@@ -297,27 +297,39 @@ app.use((req, res) => {
 // ================================
 
 // Função de busca no YouTube
+
 async function buscarYoutube(termo) {
   try {
     const apiKey = process.env.YT_API_KEY;
     if (!apiKey) throw new Error('API Key do YouTube não configurada');
-    
+
     const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(termo)}&type=video&key=${apiKey}&maxResults=5`;
-    const res = await axios.get(url);
-    
-    return res.data.items.map(video => ({
+    const resSearch = await axios.get(url);
+
+    const videoIds = resSearch.data.items.map(v => v.id.videoId).join(',');
+    const urlDetails = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videoIds}&key=${apiKey}`;
+    const resDetails = await axios.get(urlDetails);
+
+    const duracoes = {};
+    resDetails.data.items.forEach(item => {
+      duracoes[item.id] = formatarDuracaoISO(item.contentDetails.duration);
+    });
+
+    return resSearch.data.items.map(video => ({
       plataforma: 'YouTube',
       titulo: video.snippet.title,
       thumb: video.snippet.thumbnails.high.url,
       videoId: video.id.videoId,
       url: `https://www.youtube.com/watch?v=${video.id.videoId}`,
       canal: video.snippet.channelTitle,
-      duracao: '--:--' // A duração requer outra chamada à API
+      duracao: duracoes[video.id.videoId] || '--:--'
     }));
   } catch (error) {
     registrarLog('ERRO', 'Falha na busca do YouTube', error.message);
     return [];
   }
+}
+
 }
 
 // Função de busca no Vimeo
@@ -344,6 +356,14 @@ async function buscarVimeo(termo) {
     registrarLog('ERRO', 'Falha na busca do Vimeo', error.message);
     return [];
   }
+}
+
+function formatarDuracaoISO(isoDuration) {
+  const match = isoDuration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!match) return '--:--';
+  const [, horas, minutos, segundos] = match.map(Number);
+  const h = horas || 0, m = minutos || 0, s = segundos || 0;
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
 }
 
 // Função auxiliar para formatar duração
@@ -386,6 +406,31 @@ app.get('/buscar', async (req, res) => {
     registrarLog('ERRO', 'Falha na busca unificada', error.message);
     res.status(500).json({ erro: 'Erro ao buscar vídeos', detalhes: error.message });
   }
+});
+
+
+
+app.get('/redirect-download', (req, res) => {
+  const { url, format } = req.query;
+  if (!url || !format) return res.status(400).send('Parâmetros ausentes');
+
+  const cookiesValidos = validarCookies();
+  const cookiesParam = cookiesValidos ? `--cookies "${COOKIES_PATH}"` : '';
+  const userAgent = spoofHeaders()['User-Agent'];
+  const comando = `yt-dlp -f ${format} -g --no-playlist --force-ipv4 --no-cache-dir --retries 3 --user-agent "${userAgent}" ${cookiesParam} "${url}"`;
+
+  exec(comando, { timeout: 30000 }, (err, stdout, stderr) => {
+    if (err) {
+      registrarLog('ERRO', 'Redirect falhou', stderr || err.message, req.clientIp);
+      return res.status(500).send('Erro ao gerar link');
+    }
+
+    const link = stdout.trim().split('\n').pop();
+    if (!validarURL(link)) return res.status(500).send('Link inválido');
+
+    registrarLog('SUCESSO', 'Redirect download', link, req.clientIp);
+    res.redirect(link);
+  });
 });
 
 
