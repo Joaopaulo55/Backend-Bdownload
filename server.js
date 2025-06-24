@@ -1,5 +1,5 @@
 // ================================
-// BACKEND - server.js (Versão Corrigida)
+// BACKEND - server.js (Versão Atualizada)
 // ================================
 const express = require('express');
 const cors = require('cors');
@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const rateLimit = require('express-rate-limit');
+const cheerio = require('cheerio');
 
 // Verificação de ambiente
 require('dotenv').config();
@@ -17,7 +18,7 @@ const chalk = require('chalk');
 function checkDependencies() {
   const requiredModules = [
     'express', 'cors', 'axios', 'ffmpeg-static', 
-    'express-rate-limit', 'chalk', 'dotenv'
+    'express-rate-limit', 'chalk', 'dotenv', 'cheerio'
   ];
 
   requiredModules.forEach(mod => {
@@ -41,7 +42,6 @@ const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
 const LOG_FILE = path.join(__dirname, 'logs.txt');
 const JPAINEL_ENDPOINT = process.env.JPAINEL_ENDPOINT || '';
 
-
 // Configuração do rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
@@ -50,7 +50,11 @@ const limiter = rateLimit({
 
 // Configurações melhoradas de CORS
 const corsOptions = {
-  origin: ['https://bdownload.netlify.app','https://joaopaulo55.github.io', 'https://joaopaulo55.github.io/Jpainel'],
+  origin: [
+    'https://joaopaulo55.github.io', 
+    'https://joaopaulo55.github.io/Jpainel',
+    'https://bdownload.netlify.app'
+  ],
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   optionsSuccessStatus: 200
@@ -248,7 +252,7 @@ app.post('/download', (req, res) => {
     const cookiesValidos = validarCookies();
     const cookiesParam = cookiesValidos ? `--cookies "${COOKIES_PATH}"` : '';
     const userAgent = spoofHeaders()['User-Agent'];
-    const comando = `yt-dlp -f ${format} -g --no-playlist ${cookiesParam} --user-agent "${userAgent}" "${url}"`;
+    const comando = `yt-dlp -f ${format} -g --no-playlist --force-ipv4 --no-cache-dir --retries 3 --fragment-retries 2 --user-agent "${userAgent}" ${cookiesValidos ? `--cookies "${COOKIES_PATH}"` : ''} "${url}"`;
 
     exec(comando, { timeout: 30000 }, (err, stdout, stderr) => {
       if (err) {
@@ -286,6 +290,149 @@ app.use((err, req, res, next) => {
 app.use((req, res) => {
   res.status(404).json({ error: 'Rota não encontrada' });
 });
+
+
+// ================================
+// APIs de Busca de Vídeos
+// ================================
+
+// Função de busca no YouTube
+
+async function buscarYoutube(termo) {
+  try {
+    const apiKey = process.env.YT_API_KEY;
+    if (!apiKey) throw new Error('API Key do YouTube não configurada');
+
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(termo)}&type=video&key=${apiKey}&maxResults=5`;
+    const resSearch = await axios.get(url);
+
+    const videoIds = resSearch.data.items.map(v => v.id.videoId).join(',');
+    const urlDetails = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videoIds}&key=${apiKey}`;
+    const resDetails = await axios.get(urlDetails);
+
+    const duracoes = {};
+    resDetails.data.items.forEach(item => {
+      duracoes[item.id] = formatarDuracaoISO(item.contentDetails.duration);
+    });
+
+    return resSearch.data.items.map(video => ({
+      plataforma: 'YouTube',
+      titulo: video.snippet.title,
+      thumb: video.snippet.thumbnails.high.url,
+      videoId: video.id.videoId,
+      url: `https://www.youtube.com/watch?v=${video.id.videoId}`,
+      canal: video.snippet.channelTitle,
+      duracao: duracoes[video.id.videoId] || '--:--'
+    }));
+  } catch (error) {
+    registrarLog('ERRO', 'Falha na busca do YouTube', error.message);
+    return [];
+  }
+}
+
+}
+
+// Função de busca no Vimeo
+async function buscarVimeo(termo) {
+  try {
+    const accessToken = process.env.VIMEO_TOKEN;
+    if (!accessToken) throw new Error('Token do Vimeo não configurado');
+    
+    const res = await axios.get(`https://api.vimeo.com/videos?query=${encodeURIComponent(termo)}&per_page=5`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    return res.data.data.map(video => ({
+      plataforma: 'Vimeo',
+      titulo: video.name,
+      thumb: video.pictures.sizes[3].link, // Pegando thumbnail média
+      url: video.link,
+      canal: video.user.name,
+      duracao: formatarDuracao(video.duration)
+    }));
+  } catch (error) {
+    registrarLog('ERRO', 'Falha na busca do Vimeo', error.message);
+    return [];
+  }
+}
+
+function formatarDuracaoISO(isoDuration) {
+  const match = isoDuration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!match) return '--:--';
+  const [, horas, minutos, segundos] = match.map(Number);
+  const h = horas || 0, m = minutos || 0, s = segundos || 0;
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+
+// Função auxiliar para formatar duração
+function formatarDuracao(segundos) {
+  const minutos = Math.floor(segundos / 60);
+  const segs = Math.floor(segundos % 60);
+  return `${minutos}:${segs < 10 ? '0' + segs : segs}`;
+}
+
+// Busca unificada
+app.get('/buscar', async (req, res) => {
+  const termo = req.query.q;
+  const plataforma = req.query.platform || 'all';
+  
+  if (!termo || termo.length < 3) {
+    return res.status(400).json({ erro: 'Termo de busca muito curto' });
+  }
+
+  try {
+    let resultados = [];
+    
+    // Busca no YouTube se for 'all' ou 'youtube'
+    if (plataforma === 'all' || plataforma === 'youtube') {
+      const youtubeResults = await buscarYoutube(termo);
+      resultados.push(...youtubeResults);
+    }
+    
+    // Busca no Vimeo se for 'all' ou 'vimeo'
+    if (plataforma === 'all' || plataforma === 'vimeo') {
+      const vimeoResults = await buscarVimeo(termo);
+      resultados.push(...vimeoResults);
+    }
+    
+    // Limitar a 10 resultados no máximo
+    resultados = resultados.slice(0, 10);
+    
+    res.json({ resultados });
+    
+  } catch (error) {
+    registrarLog('ERRO', 'Falha na busca unificada', error.message);
+    res.status(500).json({ erro: 'Erro ao buscar vídeos', detalhes: error.message });
+  }
+});
+
+
+
+app.get('/redirect-download', (req, res) => {
+  const { url, format } = req.query;
+  if (!url || !format) return res.status(400).send('Parâmetros ausentes');
+
+  const cookiesValidos = validarCookies();
+  const cookiesParam = cookiesValidos ? `--cookies "${COOKIES_PATH}"` : '';
+  const userAgent = spoofHeaders()['User-Agent'];
+  const comando = `yt-dlp -f ${format} -g --no-playlist --force-ipv4 --no-cache-dir --retries 3 --user-agent "${userAgent}" ${cookiesParam} "${url}"`;
+
+  exec(comando, { timeout: 30000 }, (err, stdout, stderr) => {
+    if (err) {
+      registrarLog('ERRO', 'Redirect falhou', stderr || err.message, req.clientIp);
+      return res.status(500).send('Erro ao gerar link');
+    }
+
+    const link = stdout.trim().split('\n').pop();
+    if (!validarURL(link)) return res.status(500).send('Link inválido');
+
+    registrarLog('SUCESSO', 'Redirect download', link, req.clientIp);
+    res.redirect(link);
+  });
+});
+
 
 // Inicialização
 function iniciarServidor() {
