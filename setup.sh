@@ -58,10 +58,23 @@ elif ! command -v ffmpeg &> /dev/null; then
   echo "⚠️ ffmpeg não encontrado - alguns recursos podem não funcionar"
 fi
 
-# Cria arquivos necessários
-echo "📂 Criando arquivos de configuração..."
-touch logs.txt cookies.txt
-chmod 644 cookies.txt
+# Verifica arquivo cookies.txt
+echo "🍪 Verificando arquivo cookies.txt..."
+if [ -f "cookies.txt" ]; then
+  echo "📝 cookies.txt encontrado. Bdownload Online" >> logs.txt
+  echo "✓ cookies.txt encontrado - logs atualizados"
+else
+  cat << "EOF"
+
+  ███    ██ ██   ██  ██████   ██   ██  █████  
+  ████   ██ ██   ██ ██    ██  ██   ██ ██   ██ 
+  ██ ██  ██ ███████ ██    ██  ███████ ███████ 
+  ██  ██ ██ ██   ██ ██    ██  ██   ██ ██   ██ 
+  ██   ████ ██   ██  ██████   ██   ██ ██   ██ 
+
+EOF
+  echo "❌ Não há cookies.txt" >> logs.txt
+fi
 
 # Verifica instalações
 echo "✅ Verificando instalações:"
