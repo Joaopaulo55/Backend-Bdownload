@@ -1,5 +1,5 @@
 // ================================
-// BACKEND - server.js estilo Y2mate (com suporte a Shorts e youtu.be)
+// BACKEND - server.js estilo Y2mate (robusto, com verificação de cookies e tratamento de erro)
 // ================================
 
 const express = require('express');
@@ -54,6 +54,18 @@ function normalizarURLYoutube(url) {
   } catch {
     return url;
   }
+}
+
+function verificarCookies(callback) {
+  const testeUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+  const comando = `yt-dlp -g --cookies ${COOKIES_PATH} "${testeUrl}"`;
+  exec(comando, (err, stdout, stderr) => {
+    if (err || stderr.includes('ERROR')) {
+      callback(false);
+    } else {
+      callback(true);
+    }
+  });
 }
 
 // ================================
@@ -115,18 +127,36 @@ app.post('/formats', async (req, res) => {
   let url = normalizarURLYoutube(req.body.url);
   if (!validarURL(url)) return res.status(400).json({ erro: 'URL inválida' });
 
-  const comando = `yt-dlp -J --no-playlist --cookies ${COOKIES_PATH} "${url}"`;
-  exec(comando, { maxBuffer: 1024 * 1024 * 5 }, (err, stdout) => {
-    if (err) return res.status(500).json({ erro: 'Erro ao obter formatos' });
-    const data = JSON.parse(stdout);
-    const formats = (data.formats || []).map(f => ({
-      id: f.format_id,
-      ext: f.ext,
-      resolucao: f.resolution || `${f.height || 'A'}p`,
-      tamanho: f.filesize,
-      tipo: f.vcodec === 'none' ? 'audio' : (f.acodec === 'none' ? 'video' : 'completo')
-    }));
-    res.json({ title: data.title, duration: data.duration, thumbnail: data.thumbnail, formats });
+  verificarCookies((cookiesValidos) => {
+    const comando = `yt-dlp -J --no-playlist --cookies ${COOKIES_PATH} "${url}"`;
+    exec(comando, { maxBuffer: 1024 * 1024 * 5 }, (err, stdout) => {
+      if (err) {
+        console.error('Erro ao obter formatos:', err.message);
+        return res.status(500).json({ erro: 'Erro ao obter formatos' });
+      }
+
+      try {
+        const data = JSON.parse(stdout);
+        const formats = (data.formats || []).map(f => ({
+          id: f.format_id,
+          ext: f.ext,
+          resolucao: f.resolution || `${f.height || 'A'}p`,
+          tamanho: f.filesize,
+          tipo: f.vcodec === 'none' ? 'audio' : (f.acodec === 'none' ? 'video' : 'completo')
+        }));
+
+        res.json({
+          title: data.title,
+          duration: data.duration,
+          thumbnail: data.thumbnail,
+          formats,
+          cookies: cookiesValidos ? 'válidos' : 'inválidos'
+        });
+      } catch (parseError) {
+        console.error('Erro ao interpretar resposta:', parseError);
+        res.status(500).json({ erro: 'Erro ao processar dados do vídeo' });
+      }
+    });
   });
 });
 
@@ -134,9 +164,13 @@ app.post('/download', async (req, res) => {
   let url = normalizarURLYoutube(req.body.url);
   const format = req.body.format;
   if (!validarURL(url) || !format) return res.status(400).json({ erro: 'Parâmetros inválidos' });
-  const comando = `yt-dlp -f ${format} -g --no-playlist "${url}"`;
+
+  const comando = `yt-dlp -f ${format} -g --no-playlist --cookies ${COOKIES_PATH} "${url}"`;
   exec(comando, (err, stdout) => {
-    if (err) return res.status(500).json({ erro: 'Erro ao gerar link' });
+    if (err) {
+      console.error('Erro ao gerar link de download:', err.message);
+      return res.status(500).json({ erro: 'Erro ao gerar link de download' });
+    }
     const link = stdout.trim().split('\n').pop();
     res.json({ link });
   });
@@ -146,9 +180,12 @@ app.get('/redirect-download', async (req, res) => {
   let url = normalizarURLYoutube(req.query.url);
   const format = req.query.format;
   if (!validarURL(url) || !format) return res.status(400).send('Parâmetros inválidos');
-  const comando = `yt-dlp -f ${format} -g --no-playlist "${url}"`;
+  const comando = `yt-dlp -f ${format} -g --no-playlist --cookies ${COOKIES_PATH} "${url}"`;
   exec(comando, (err, stdout) => {
-    if (err) return res.status(500).send('Erro ao gerar link');
+    if (err) {
+      console.error('Erro ao redirecionar:', err.message);
+      return res.status(500).send('Erro ao redirecionar para download');
+    }
     const link = stdout.trim().split('\n').pop();
     res.redirect(link);
   });
