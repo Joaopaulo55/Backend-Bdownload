@@ -1,5 +1,5 @@
 // ================================
-// BACKEND - server.js estilo Y2mate
+// BACKEND - server.js estilo Y2mate (robusto e estendido)
 // ================================
 
 const express = require('express');
@@ -10,12 +10,12 @@ const { exec } = require('child_process');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const rateLimit = require('express-rate-limit');
-
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
+const YT_API_KEY = process.env.YT_API_KEY;
 
 // Middlewares
 app.use(cors());
@@ -33,12 +33,6 @@ function validarURL(url) {
   }
 }
 
-function spoofHeaders() {
-  return {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-  };
-}
-
 function formatarDuracaoISO(iso) {
   const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
   if (!match) return '--:--';
@@ -54,30 +48,34 @@ app.get('/', (req, res) => {
   res.send('API estilo Y2mate está ativa!');
 });
 
-// Pesquisa YouTube (com scraping caso não tenha API)
+// Rota de pesquisa com API oficial ou fallback scraping
 app.get('/buscar', async (req, res) => {
   const q = req.query.q;
   if (!q || q.length < 2) return res.status(400).json({ erro: 'Termo muito curto' });
 
-  const apiKey = process.env.YT_API_KEY;
-  if (apiKey) {
+  if (YT_API_KEY) {
     try {
-      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(q)}&type=video&key=${apiKey}&maxResults=10`;
+      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(q)}&type=video&key=${YT_API_KEY}&maxResults=10`;
       const resposta = await axios.get(url);
       const itens = resposta.data.items;
 
-      return res.json(itens.map(v => ({
-        videoId: v.id.videoId,
-        titulo: v.snippet.title,
-        canal: v.snippet.channelTitle,
-        thumb: v.snippet.thumbnails.high.url,
-        url: `https://www.youtube.com/watch?v=${v.id.videoId}`
-      })));
-    } catch {
-      // fallback abaixo
+      return res.json({
+        resultados: itens.map(v => ({
+          videoId: v.id.videoId,
+          titulo: v.snippet.title,
+          canal: v.snippet.channelTitle,
+          thumb: v.snippet.thumbnails.high.url,
+          plataforma: 'YouTube',
+          duracao: '--:--',
+          url: `https://www.youtube.com/watch?v=${v.id.videoId}`
+        }))
+      });
+    } catch (err) {
+      console.error('Erro API YouTube:', err.message);
     }
   }
 
+  // Fallback scraping
   try {
     const { data } = await axios.get(`https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`);
     const $ = cheerio.load(data);
@@ -89,10 +87,11 @@ app.get('/buscar', async (req, res) => {
       resultados.push({
         videoId,
         titulo,
+        plataforma: 'YouTube',
         url: `https://www.youtube.com${href}`
       });
     });
-    res.json(resultados);
+    res.json({ resultados });
   } catch (err) {
     res.status(500).json({ erro: 'Falha ao buscar vídeos' });
   }
@@ -114,11 +113,11 @@ app.post('/formats', async (req, res) => {
       tamanho: f.filesize,
       tipo: f.vcodec === 'none' ? 'audio' : (f.acodec === 'none' ? 'video' : 'completo')
     }));
-    res.json({ titulo: data.title, duracao: data.duration, thumb: data.thumbnail, formats });
+    res.json({ title: data.title, duration: data.duration, thumbnail: data.thumbnail, formats });
   });
 });
 
-// Gerar link direto para download
+// Gerar link direto tratado
 app.post('/download', async (req, res) => {
   const { url, format } = req.body;
   if (!validarURL(url) || !format) return res.status(400).json({ erro: 'Parâmetros inválidos' });
@@ -130,8 +129,8 @@ app.post('/download', async (req, res) => {
   });
 });
 
-// Redirecionar para link direto (como Y2mate faz)
-app.get('/direct', async (req, res) => {
+// Rota de redirecionamento para iniciar download no navegador
+app.get('/redirect-download', async (req, res) => {
   const { url, format } = req.query;
   if (!validarURL(url) || !format) return res.status(400).send('Parâmetros inválidos');
   const comando = `yt-dlp -f ${format} -g --no-playlist "${url}"`;
@@ -142,7 +141,7 @@ app.get('/direct', async (req, res) => {
   });
 });
 
-// Exibir vídeo (embed player)
+// Visualização embutida (opcional)
 app.get('/video/:id', (req, res) => {
   const id = req.params.id;
   res.send(`<!DOCTYPE html><html><body><iframe width="100%" height="360" src="https://www.youtube.com/embed/${id}" frameborder="0" allowfullscreen></iframe></body></html>`);
