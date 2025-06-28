@@ -245,7 +245,7 @@ app.post('/download', async (req, res) => {
   let url = normalizarURLYoutube(req.body.url);
   const format = req.body.format;
   
-  if (!validarURL(url) {
+  if (!validarURL(url)) {
     return res.status(400).json({ 
       sucesso: false,
       erro: 'URL inválida',
