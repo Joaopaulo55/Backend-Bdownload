@@ -40,7 +40,7 @@ fi
 
 # Instala dependências do Node
 echo "📦 Instalando dependências do Node.js..."
-npm install --legacy-peer-deps --no-audit --fund=false || {
+npm install express cors axios cheerio dotenv express-rate-limit --save || {
   echo "⚠️ Tentando instalação forçada..."
   npm install --force || {
     echo "❌ Falha ao instalar dependências Node"
@@ -58,7 +58,7 @@ elif ! command -v ffmpeg &> /dev/null; then
   echo "⚠️ ffmpeg não encontrado - alguns recursos podem não funcionar"
 fi
 
-# Verifica arquivo cookies.txt
+# Verifica cookies
 echo "🍪 Verificando arquivo cookies.txt..."
 if [ -f "cookies.txt" ]; then
   echo "📝 cookies.txt encontrado. Bdownload Online" >> logs.txt
@@ -76,7 +76,7 @@ EOF
   echo "❌ Não há cookies.txt" >> logs.txt
 fi
 
-# Verifica instalações
+# Verificações finais
 echo "✅ Verificando instalações:"
 echo -n "Node: "; node -v
 echo -n "NPM: "; npm -v
@@ -84,5 +84,7 @@ echo -n "Python: "; python3 --version || echo "❌"
 echo -n "yt-dlp: "; command -v yt-dlp && yt-dlp --version || echo "❌"
 echo -n "ffmpeg: "; command -v ffmpeg && ffmpeg -version || echo "⚠️"
 echo -n "Cheerio: "; npm list cheerio >/dev/null && echo "✓" || echo "❌"
+echo -n "dotenv: "; npm list dotenv >/dev/null && echo "✓" || echo "❌"
+echo -n "express-rate-limit: "; npm list express-rate-limit >/dev/null && echo "✓" || echo "❌"
 
 echo "🚀 Setup concluído com sucesso!"
