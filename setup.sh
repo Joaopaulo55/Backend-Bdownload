@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🔵 Iniciando setup do projeto..."
+echo "🔵 Iniciando setup do projeto Y2Mate..."
 
 # Configura ambiente
 set -e
@@ -38,9 +38,26 @@ else
   echo "✓ yt-dlp já instalado"
 fi
 
-# Instala dependências do Node
+# Instala dependências do Node (incluindo novas para monitoramento)
 echo "📦 Instalando dependências do Node.js..."
-npm install express cors axios cheerio dotenv express-rate-limit --save || {
+REQUIRED_DEPS=(
+  "express"
+  "cors"
+  "axios"
+  "dotenv"
+  "express-rate-limit"
+  "helmet"
+  "morgan"
+  "uuid"
+  "sanitize-filename"
+  "validator"
+  "compression"
+  "winston"
+  "winston-daily-rotate-file"
+  "express-status-monitor"
+)
+
+npm install "${REQUIRED_DEPS[@]}" --save || {
   echo "⚠️ Tentando instalação forçada..."
   npm install --force || {
     echo "❌ Falha ao instalar dependências Node"
@@ -58,10 +75,14 @@ elif ! command -v ffmpeg &> /dev/null; then
   echo "⚠️ ffmpeg não encontrado - alguns recursos podem não funcionar"
 fi
 
+# Cria diretórios necessários
+echo "📂 Criando diretórios de logs e temp..."
+mkdir -p logs temp
+
 # Verifica cookies
 echo "🍪 Verificando arquivo cookies.txt..."
 if [ -f "cookies.txt" ]; then
-  echo "📝 cookies.txt encontrado. Bdownload Online" >> logs.txt
+  echo "📝 cookies.txt encontrado. Baixos com cookies habilitados" >> logs/setup.log
   echo "✓ cookies.txt encontrado - logs atualizados"
 else
   cat << "EOF"
@@ -73,7 +94,7 @@ else
   ██   ████ ██   ██  ██████   ██   ██ ██   ██ 
 
 EOF
-  echo "❌ Não há cookies.txt" >> logs.txt
+  echo "❌ Não há cookies.txt" >> logs/setup.log
 fi
 
 # Verificações finais
@@ -83,8 +104,11 @@ echo -n "NPM: "; npm -v
 echo -n "Python: "; python3 --version || echo "❌"
 echo -n "yt-dlp: "; command -v yt-dlp && yt-dlp --version || echo "❌"
 echo -n "ffmpeg: "; command -v ffmpeg && ffmpeg -version || echo "⚠️"
-echo -n "Cheerio: "; npm list cheerio >/dev/null && echo "✓" || echo "❌"
-echo -n "dotenv: "; npm list dotenv >/dev/null && echo "✓" || echo "❌"
-echo -n "express-rate-limit: "; npm list express-rate-limit >/dev/null && echo "✓" || echo "❌"
+
+# Verifica dependências Node
+for dep in "${REQUIRED_DEPS[@]}"; do
+  echo -n "$dep: "
+  npm list "$dep" >/dev/null 2>&1 && echo "✓" || echo "❌"
+done
 
 echo "🚀 Setup concluído com sucesso!"
