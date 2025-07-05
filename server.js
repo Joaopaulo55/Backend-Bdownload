@@ -250,7 +250,7 @@ app.post('/stream', async (req, res, next) => {
 
 app.post('/download', async (req, res, next) => {
   try {
-    const { url } = req.body;
+    const { url, format } = req.body; // Agora espera tanto url quanto format
     if (!url) throw new Error('URL ausente');
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -263,11 +263,18 @@ app.post('/download', async (req, res, next) => {
 
     simulateProgress(3000, sendProgress);
 
-    const direct = await getDirectUrl(url);
+    // Modificado para usar o formato especificado
+    let command = `yt-dlp -f ${format || 'best'} -g "${url}"`;
+    
+    if (detectPlatform(url) === 'youtube' && fs.existsSync(cookiesFile)) {
+      command += ` --cookies ${cookiesFile}`;
+    }
+
+    const directUrl = await executeCommand(command);
     
     res.write(`data: ${JSON.stringify({ 
       progress: 100,
-      download: direct,
+      download: directUrl,
       message: 'URL de download obtida com sucesso'
     })}\n\n`);
     res.end();
