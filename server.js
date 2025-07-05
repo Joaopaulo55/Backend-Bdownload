@@ -49,10 +49,8 @@ if (!fs.existsSync(cookiesFile)) {
 const keepAlive = () => {
   setInterval(() => {
     console.log('Keep-alive ping');
-  }, 5000); // A cada 5 segundos
+  }, 5000);
 };
-
-// Inicia o keep-alive
 keepAlive();
 
 // API Key do YouTube 
@@ -74,63 +72,85 @@ const executeCommand = (command, timeout = 30000) => {
       resolve(stdout.trim());
     });
 
-    // Limpa processos pendentes se a conexão for fechada
     process.on('exit', () => {
       if (!process.killed) process.kill();
     });
   });
 };
 
-// Função para simular progresso (usada para sincronizar com a barra de progresso do frontend)
+// Detecta a plataforma do vídeo
+const detectPlatform = (url) => {
+  if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
+  if (url.includes('vimeo.com')) return 'vimeo';
+  if (url.includes('dailymotion.com')) return 'dailymotion';
+  if (url.includes('tiktok.com')) return 'tiktok';
+  if (url.includes('instagram.com')) return 'instagram';
+  return 'generic';
+};
+
+// Função para simular progresso
 const simulateProgress = (duration, callback) => {
   let progress = 0;
   const interval = setInterval(() => {
     progress += 10;
     callback(progress);
-    if (progress >= 100) {
-      clearInterval(interval);
-    }
+    if (progress >= 100) clearInterval(interval);
   }, duration / 10);
 };
 
-// Utilidades com melhor tratamento de erros
+// Obtém URL direta do vídeo
 const getDirectUrl = async (url) => {
   try {
-    return await executeCommand(
-      `yt-dlp -f best -g "${url}" --cookies ${cookiesFile}`
-    );
+    const platform = detectPlatform(url);
+    let command = `yt-dlp -f best -g "${url}"`;
+    
+    if (platform === 'youtube' && fs.existsSync(cookiesFile)) {
+      command += ` --cookies ${cookiesFile}`;
+    }
+    
+    return await executeCommand(command);
   } catch (error) {
     throw new Error(`Falha ao obter URL direta: ${error.message}`);
   }
 };
 
+// Extrai informações do vídeo
 const extractInfo = async (url) => {
   try {
-    const stdout = await executeCommand(
-      `yt-dlp -j "${url}" --cookies ${cookiesFile}`
-    );
+    const platform = detectPlatform(url);
+    let command = `yt-dlp -j "${url}"`;
     
+    if (platform === 'youtube' && fs.existsSync(cookiesFile)) {
+      command += ` --cookies ${cookiesFile}`;
+    }
+    
+    const stdout = await executeCommand(command);
     const data = JSON.parse(stdout);
+    
     return {
       title: data.title,
       duration: data.duration,
       thumbnail: data.thumbnail,
-      formats: data.formats.map(f => ({
-        format: f.format,
-        url: f.url,
-        ext: f.ext,
-        height: f.height,
-        filesize: f.filesize
-      }))
+      formats: data.formats
+        .filter(f => f.filesize && f.filesize > 0)
+        .map(f => ({
+          format: f.format_id,
+          url: f.url,
+          ext: f.ext,
+          height: f.height || 0,
+          filesize: f.filesize
+        }))
+        .sort((a, b) => b.height - a.height)
     };
   } catch (error) {
     throw new Error(`Falha ao extrair informações: ${error.message}`);
   }
 };
 
+// Busca vídeos no YouTube
 const searchYouTube = async (query) => {
   try {
-    // Primeiro tenta com a API oficial do YouTube
+    // Tenta com a API oficial do YouTube
     try {
       const response = await axios.get(
         `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=5&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`
@@ -145,13 +165,12 @@ const searchYouTube = async (query) => {
     } catch (apiError) {
       console.warn('Falha na API do YouTube, usando yt-dlp como fallback');
       
-      // Fallback para yt-dlp se a API falhar
+      // Fallback para yt-dlp
       const stdout = await executeCommand(
         `yt-dlp "ytsearch5:${query}" --print "%(title)s|%(id)s|%(url)s"`
       );
       
-      const lines = stdout.trim().split('\n');
-      return lines.map(line => {
+      return stdout.trim().split('\n').map(line => {
         const [title, id, url] = line.split('|');
         return { 
           title: title?.trim() || 'Sem título', 
@@ -184,47 +203,42 @@ const errorHandler = (err, req, res, next) => {
   });
 };
 
-// Rotas com melhor tratamento de erros
+// Rotas
 app.post('/stream', async (req, res, next) => {
   try {
     const { url } = req.body;
-    if (!url) {
-      throw new Error('URL ausente');
-    }
+    if (!url) throw new Error('URL ausente');
 
-    // Envia progresso para o frontend
-    const sendProgress = (progress) => {
-      res.write(`data: ${JSON.stringify({ progress })}\n\n`);
-    };
-
-    // Configura headers para SSE (Server-Sent Events)
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    // Simula progresso (substitua pela lógica real)
+    const sendProgress = (progress) => {
+      res.write(`data: ${JSON.stringify({ progress })}\n\n`);
+    };
+
     simulateProgress(5000, sendProgress);
 
-    const cmd = `yt-dlp -f best -o - "${url}" --cookies ${cookiesFile}`;
+    const platform = detectPlatform(url);
+    let cmd = `yt-dlp -f best -o - "${url}"`;
+    
+    if (platform === 'youtube' && fs.existsSync(cookiesFile)) {
+      cmd += ` --cookies ${cookiesFile}`;
+    }
+
     const process = exec(cmd);
 
-    // Tratamento para quando o cliente fecha a conexão
     req.on('close', () => {
       if (!process.killed) process.kill();
       console.log('Streaming interrompido pelo cliente');
     });
 
-    process.on('error', (err) => {
-      throw new Error(`Erro no processo de streaming: ${err.message}`);
-    });
-
-    // Quando o stream estiver pronto, envia para o cliente
     process.stdout.on('data', (data) => {
       res.write(`data: ${JSON.stringify({ videoData: data.toString('base64') })}\n\n`);
     });
 
     process.stdout.on('end', () => {
-      res.write('data: { "progress": 100, "status": "complete" }\n\n');
+      res.write('data: {"progress":100,"status":"complete"}\n\n');
       res.end();
     });
 
@@ -237,11 +251,8 @@ app.post('/stream', async (req, res, next) => {
 app.post('/download', async (req, res, next) => {
   try {
     const { url } = req.body;
-    if (!url) {
-      throw new Error('URL ausente');
-    }
+    if (!url) throw new Error('URL ausente');
 
-    // Configura SSE para progresso
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -250,7 +261,6 @@ app.post('/download', async (req, res, next) => {
       res.write(`data: ${JSON.stringify({ progress })}\n\n`);
     };
 
-    // Simula progresso (substitua pela lógica real)
     simulateProgress(3000, sendProgress);
 
     const direct = await getDirectUrl(url);
@@ -272,9 +282,7 @@ app.post('/download', async (req, res, next) => {
 app.post('/info', async (req, res, next) => {
   try {
     const { url } = req.body;
-    if (!url) {
-      throw new Error('URL ausente');
-    }
+    if (!url) throw new Error('URL ausente');
 
     const info = await extractInfo(url);
     res.json(info);
@@ -289,9 +297,7 @@ app.post('/info', async (req, res, next) => {
 app.get('/search', async (req, res, next) => {
   try {
     const { q } = req.query;
-    if (!q) {
-      throw new Error('Termo de busca ausente');
-    }
+    if (!q) throw new Error('Termo de busca ausente');
 
     const results = await searchYouTube(q);
     res.json(results);
@@ -311,16 +317,19 @@ app.post('/convert', async (req, res, next) => {
     }
 
     const tempDir = path.join(__dirname, 'temp');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
     const outFile = path.join(tempDir, `temp_${Date.now()}.${format}`);
-    const cmd = format === 'mp3'
-      ? `yt-dlp -x --audio-format mp3 -o "${outFile}" "${url}" --cookies ${cookiesFile}`
-      : `yt-dlp -f best -o "${outFile}" "${url}" --cookies ${cookiesFile}`;
+    const platform = detectPlatform(url);
+    
+    let cmd = format === 'mp3'
+      ? `yt-dlp -x --audio-format mp3 -o "${outFile}" "${url}"`
+      : `yt-dlp -f best -o "${outFile}" "${url}"`;
+    
+    if (platform === 'youtube' && fs.existsSync(cookiesFile)) {
+      cmd += ` --cookies ${cookiesFile}`;
+    }
 
-    // Configura SSE para progresso
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -329,40 +338,25 @@ app.post('/convert', async (req, res, next) => {
       res.write(`data: ${JSON.stringify({ progress })}\n\n`);
     };
 
-    // Simula progresso (substitua pela lógica real)
     simulateProgress(5000, sendProgress);
 
     await executeCommand(cmd);
 
-    // Verifica se o arquivo foi criado
-    if (!fs.existsSync(outFile)) {
-      throw new Error('Arquivo de saída não foi gerado');
-    }
+    if (!fs.existsSync(outFile)) throw new Error('Arquivo de saída não foi gerado');
 
-    // Envia o arquivo quando pronto
     res.write(`data: ${JSON.stringify({ 
       progress: 100,
       file: `converted.${format}`,
       status: 'ready'
     })}\n\n`);
 
-    // Configura o cabeçalho apropriado para o tipo de arquivo
     res.setHeader('Content-Type', format === 'mp3' ? 'audio/mpeg' : 'video/mp4');
     res.setHeader('Content-Disposition', `attachment; filename="converted.${format}"`);
 
-    // Stream do arquivo com remoção após envio
     const fileStream = fs.createReadStream(outFile);
     fileStream.pipe(res);
     
-    fileStream.on('close', () => {
-      fs.unlink(outFile, (err) => {
-        if (err) console.error(`Erro ao remover arquivo temporário: ${err.message}`);
-      });
-    });
-
-    fileStream.on('error', (err) => {
-      throw new Error(`Erro ao enviar arquivo: ${err.message}`);
-    });
+    fileStream.on('close', () => fs.unlink(outFile, () => {}));
 
   } catch (error) {
     error.type = 'CONVERSION_ERROR';
@@ -371,25 +365,19 @@ app.post('/convert', async (req, res, next) => {
   }
 });
 
-// Rota para keep-alive e notificações
 app.get('/notifications', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
-  // Envia um número aleatório a cada 5 segundos
   const interval = setInterval(() => {
     const randomNumber = Math.floor(Math.random() * 20) + 1;
     res.write(`data: ${JSON.stringify({ number: randomNumber })}\n\n`);
   }, 5000);
 
-  // Limpa o intervalo quando a conexão é fechada
-  req.on('close', () => {
-    clearInterval(interval);
-  });
+  req.on('close', () => clearInterval(interval));
 });
 
-// Rota de saúde do servidor
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'online',
@@ -398,7 +386,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Rota 404
 app.use((req, res) => {
   res.status(404).json({
     error: 'Endpoint não encontrado',
@@ -406,15 +393,12 @@ app.use((req, res) => {
   });
 });
 
-// Middleware de erro
 app.use(errorHandler);
 
-// Inicialização do servidor
 app.listen(PORT, () => {
-  console.log(`Servidor Y2Mate rodando na porta ${PORT}`);
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
 
-// Tratamento de erros não capturados
 process.on('unhandledRejection', (err) => {
   console.error(`[ERRO NÃO TRATADO] ${err.message}`);
 });
