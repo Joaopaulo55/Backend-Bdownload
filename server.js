@@ -194,7 +194,7 @@ app.post('/stream', async (req, res, next) => {
 
     // Envia progresso para o frontend
     const sendProgress = (progress) => {
-      res.write(`data: ${JSON.stringify({ progress })}\n\n`);
+      res.write(`event: progress\ndata: ${JSON.stringify({ progress })}\n\n`);
     };
 
     // Configura headers para SSE (Server-Sent Events)
@@ -220,11 +220,11 @@ app.post('/stream', async (req, res, next) => {
 
     // Quando o stream estiver pronto, envia para o cliente
     process.stdout.on('data', (data) => {
-      res.write(`data: ${JSON.stringify({ videoData: data.toString('base64') })}\n\n`);
+      res.write(`event: video\ndata: ${JSON.stringify({ videoData: data.toString('base64') })}\n\n`);
     });
 
     process.stdout.on('end', () => {
-      res.write('data: { "progress": 100, "status": "complete" }\n\n');
+      res.write('event: complete\ndata: {"progress": 100, "status": "complete"}\n\n');
       res.end();
     });
 
@@ -333,8 +333,8 @@ app.post('/convert', async (req, res, next) => {
 
     const sendProgress = (progress) => {
       res.write(`event: progress\ndata: ${JSON.stringify({ progress })}\n\n`);
-    
-    
+    };
+
     // Simula progresso (substitua pela lógica real)
     simulateProgress(5000, sendProgress);
 
@@ -346,7 +346,7 @@ app.post('/convert', async (req, res, next) => {
     }
 
     // Envia o arquivo quando pronto
-    res.write(`data: ${JSON.stringify({ 
+    res.write(`event: complete\ndata: ${JSON.stringify({ 
       progress: 100,
       file: `converted.${format}`,
       status: 'ready'
@@ -417,7 +417,7 @@ app.use(errorHandler);
 
 // Inicialização do servidor
 app.listen(PORT, () => {
-  console.log(`Servidor Bdownload Is On  porta ${PORT}`);
+  console.log(`Servidor Bdownload Is On porta ${PORT}`);
 });
 
 // Tratamento de erros não capturados
