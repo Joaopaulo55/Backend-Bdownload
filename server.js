@@ -26,11 +26,27 @@ app.use(cors({
 
 app.use(bodyParser.json());
 
-// Middleware para logs
+// Middleware para logs e cache
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  
+  // Configura cabeçalhos de cache para respostas
+  res.set('Cache-Control', 'public, max-age=60');
   next();
 });
+
+// Cache simples em memória
+const cache = {
+  videoInfo: new Map(),
+  searchResults: new Map()
+};
+
+// Limpa o cache periodicamente
+setInterval(() => {
+  cache.videoInfo.clear();
+  cache.searchResults.clear();
+  console.log('Cache limpo');
+}, 3600000); // A cada 1 hora
 
 // Verifica se a pasta de cookies existe
 const cookiesDir = path.join(__dirname, 'cookies');
@@ -45,19 +61,8 @@ if (!fs.existsSync(cookiesFile)) {
   console.warn('AVISO: Arquivo de cookies YouTube não encontrado em cookies/youtube.txt');
 }
 
-// Mantém o servidor ativo no Render
-const keepAlive = () => {
-  setInterval(() => {
-    console.log('Keep-alive ping');
-  }, 5000);
-};
-keepAlive();
-
-// API Key do YouTube 
-const YOUTUBE_API_KEY = 'AIzaSyB7Vx1waLthbIsvQr36eTABMS3CTbeHF_c';
-
 // Utilitário para execução de comandos com tratamento de erros
-const executeCommand = (command, timeout = 30000) => {
+const executeCommand = (command, timeout = 15000) => {
   return new Promise((resolve, reject) => {
     const process = exec(command, { timeout }, (error, stdout, stderr) => {
       if (error) {
@@ -88,34 +93,13 @@ const detectPlatform = (url) => {
   return 'generic';
 };
 
-// Função para simular progresso
-const simulateProgress = (duration, callback) => {
-  let progress = 0;
-  const interval = setInterval(() => {
-    progress += 10;
-    callback(progress);
-    if (progress >= 100) clearInterval(interval);
-  }, duration / 10);
-};
-
-// Obtém URL direta do vídeo
-const getDirectUrl = async (url) => {
-  try {
-    const platform = detectPlatform(url);
-    let command = `yt-dlp -f best -g "${url}"`;
-    
-    if (platform === 'youtube' && fs.existsSync(cookiesFile)) {
-      command += ` --cookies ${cookiesFile}`;
-    }
-    
-    return await executeCommand(command);
-  } catch (error) {
-    throw new Error(`Falha ao obter URL direta: ${error.message}`);
-  }
-};
-
-// Extrai informações do vídeo
+// Extrai informações do vídeo com cache
 const extractInfo = async (url) => {
+  const cacheKey = `info-${url}`;
+  if (cache.videoInfo.has(cacheKey)) {
+    return cache.videoInfo.get(cacheKey);
+  }
+
   try {
     const platform = detectPlatform(url);
     let command = `yt-dlp -j "${url}"`;
@@ -127,7 +111,7 @@ const extractInfo = async (url) => {
     const stdout = await executeCommand(command);
     const data = JSON.parse(stdout);
     
-    return {
+    const result = {
       title: data.title,
       duration: data.duration,
       thumbnail: data.thumbnail,
@@ -142,26 +126,38 @@ const extractInfo = async (url) => {
         }))
         .sort((a, b) => b.height - a.height)
     };
+
+    cache.videoInfo.set(cacheKey, result);
+    return result;
   } catch (error) {
     throw new Error(`Falha ao extrair informações: ${error.message}`);
   }
 };
 
-// Busca vídeos no YouTube
+// Busca vídeos no YouTube com cache e sugestões
 const searchYouTube = async (query) => {
+  const cacheKey = `search-${query}`;
+  if (cache.searchResults.has(cacheKey)) {
+    return cache.searchResults.get(cacheKey);
+  }
+
   try {
     // Tenta com a API oficial do YouTube
     try {
       const response = await axios.get(
-        `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=5&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`
+        `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=5&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}`,
+        { timeout: 5000 }
       );
       
-      return response.data.items.map(item => ({
+      const results = response.data.items.map(item => ({
         title: item.snippet.title,
         id: item.id.videoId,
         url: `https://youtube.com/watch?v=${item.id.videoId}`,
         thumbnail: item.snippet.thumbnails.default.url
       }));
+
+      cache.searchResults.set(cacheKey, results);
+      return results;
     } catch (apiError) {
       console.warn('Falha na API do YouTube, usando yt-dlp como fallback');
       
@@ -170,7 +166,7 @@ const searchYouTube = async (query) => {
         `yt-dlp "ytsearch5:${query}" --print "%(title)s|%(id)s|%(url)s"`
       );
       
-      return stdout.trim().split('\n').map(line => {
+      const results = stdout.trim().split('\n').map(line => {
         const [title, id, url] = line.split('|');
         return { 
           title: title?.trim() || 'Sem título', 
@@ -178,9 +174,29 @@ const searchYouTube = async (query) => {
           url: url?.trim() || 'Sem URL' 
         };
       });
+
+      cache.searchResults.set(cacheKey, results);
+      return results;
     }
   } catch (error) {
     throw new Error(`Falha na busca: ${error.message}`);
+  }
+};
+
+// Gera sugestões de pesquisa baseadas em tendências
+const getSearchSuggestions = async (query) => {
+  try {
+    if (!query || query.length < 3) return [];
+    
+    const response = await axios.get(
+      `https://suggestqueries.google.com/complete/search?client=firefox&q=${encodeURIComponent(query)}`,
+      { timeout: 3000 }
+    );
+    
+    return response.data[1] || [];
+  } catch (error) {
+    console.error('Erro ao obter sugestões:', error);
+    return [];
   }
 };
 
@@ -213,12 +229,6 @@ app.post('/stream', async (req, res, next) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    const sendProgress = (progress) => {
-      res.write(`data: ${JSON.stringify({ progress })}\n\n`);
-    };
-
-    simulateProgress(5000, sendProgress);
-
     const platform = detectPlatform(url);
     let cmd = `yt-dlp -f best -o - "${url}"`;
     
@@ -234,11 +244,10 @@ app.post('/stream', async (req, res, next) => {
     });
 
     process.stdout.on('data', (data) => {
-      res.write(`data: ${JSON.stringify({ videoData: data.toString('base64') })}\n\n`);
+      res.write(data);
     });
 
     process.stdout.on('end', () => {
-      res.write('data: {"progress":100,"status":"complete"}\n\n');
       res.end();
     });
 
@@ -250,20 +259,9 @@ app.post('/stream', async (req, res, next) => {
 
 app.post('/download', async (req, res, next) => {
   try {
-    const { url, format } = req.body; // Agora espera tanto url quanto format
+    const { url, format } = req.body;
     if (!url) throw new Error('URL ausente');
 
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-
-    const sendProgress = (progress) => {
-      res.write(`data: ${JSON.stringify({ progress })}\n\n`);
-    };
-
-    simulateProgress(3000, sendProgress);
-
-    // Modificado para usar o formato especificado
     let command = `yt-dlp -f ${format || 'best'} -g "${url}"`;
     
     if (detectPlatform(url) === 'youtube' && fs.existsSync(cookiesFile)) {
@@ -272,12 +270,10 @@ app.post('/download', async (req, res, next) => {
 
     const directUrl = await executeCommand(command);
     
-    res.write(`data: ${JSON.stringify({ 
-      progress: 100,
+    res.json({ 
       download: directUrl,
       message: 'URL de download obtida com sucesso'
-    })}\n\n`);
-    res.end();
+    });
 
   } catch (error) {
     error.type = 'DOWNLOAD_ERROR';
@@ -316,6 +312,17 @@ app.get('/search', async (req, res, next) => {
   }
 });
 
+app.get('/suggest', async (req, res, next) => {
+  try {
+    const { q } = req.query;
+    const suggestions = await getSearchSuggestions(q);
+    res.json(suggestions);
+  } catch (error) {
+    error.type = 'SUGGEST_ERROR';
+    next(error);
+  }
+});
+
 app.post('/convert', async (req, res, next) => {
   try {
     const { url, format } = req.body;
@@ -337,25 +344,9 @@ app.post('/convert', async (req, res, next) => {
       cmd += ` --cookies ${cookiesFile}`;
     }
 
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-
-    const sendProgress = (progress) => {
-      res.write(`data: ${JSON.stringify({ progress })}\n\n`);
-    };
-
-    simulateProgress(5000, sendProgress);
-
     await executeCommand(cmd);
 
     if (!fs.existsSync(outFile)) throw new Error('Arquivo de saída não foi gerado');
-
-    res.write(`data: ${JSON.stringify({ 
-      progress: 100,
-      file: `converted.${format}`,
-      status: 'ready'
-    })}\n\n`);
 
     res.setHeader('Content-Type', format === 'mp3' ? 'audio/mpeg' : 'video/mp4');
     res.setHeader('Content-Disposition', `attachment; filename="converted.${format}"`);
@@ -377,12 +368,22 @@ app.get('/notifications', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
-  const interval = setInterval(() => {
+  // Envia um número aleatório a cada 5-15 segundos
+  const sendRandomNumber = () => {
     const randomNumber = Math.floor(Math.random() * 20) + 1;
     res.write(`data: ${JSON.stringify({ number: randomNumber })}\n\n`);
-  }, 5000);
+    
+    // Agenda o próximo envio com intervalo aleatório
+    const nextInterval = Math.floor(Math.random() * 10000) + 5000;
+    setTimeout(sendRandomNumber, nextInterval);
+  };
 
-  req.on('close', () => clearInterval(interval));
+  // Inicia o primeiro envio
+  sendRandomNumber();
+
+  req.on('close', () => {
+    console.log('Client disconnected from notifications');
+  });
 });
 
 app.get('/health', (req, res) => {
