@@ -55,7 +55,7 @@ const keepAlive = () => {
 // Inicia o keep-alive
 keepAlive();
 
-// API Key do YouTube (substitua pela sua)
+// API Key do YouTube 
 const YOUTUBE_API_KEY = 'AIzaSyB7Vx1waLthbIsvQr36eTABMS3CTbeHF_c';
 
 // Utilitário para execução de comandos com tratamento de erros
@@ -194,7 +194,7 @@ app.post('/stream', async (req, res, next) => {
 
     // Envia progresso para o frontend
     const sendProgress = (progress) => {
-      res.write(`event: progress\ndata: ${JSON.stringify({ progress })}\n\n`);
+      res.write(`data: ${JSON.stringify({ progress })}\n\n`);
     };
 
     // Configura headers para SSE (Server-Sent Events)
@@ -220,11 +220,11 @@ app.post('/stream', async (req, res, next) => {
 
     // Quando o stream estiver pronto, envia para o cliente
     process.stdout.on('data', (data) => {
-      res.write(`event: video\ndata: ${JSON.stringify({ videoData: data.toString('base64') })}\n\n`);
+      res.write(`data: ${JSON.stringify({ videoData: data.toString('base64') })}\n\n`);
     });
 
     process.stdout.on('end', () => {
-      res.write('event: complete\ndata: {"progress": 100, "status": "complete"}\n\n');
+      res.write('data: { "progress": 100, "status": "complete" }\n\n');
       res.end();
     });
 
@@ -236,42 +236,36 @@ app.post('/stream', async (req, res, next) => {
 
 app.post('/download', async (req, res, next) => {
   try {
-    const { url, format } = req.body;
-    if (!url || !format) {
-      throw new Error('URL e formato são obrigatórios');
+    const { url } = req.body;
+    if (!url) {
+      throw new Error('URL ausente');
     }
 
+    // Configura SSE para progresso
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    // Envia progresso inicial
-    res.write('event: progress\ndata: {"progress": 0, "message": "Preparando download..."}\n\n');
+    const sendProgress = (progress) => {
+      res.write(`data: ${JSON.stringify({ progress })}\n\n`);
+    };
 
     // Simula progresso (substitua pela lógica real)
-    for (let i = 0; i <= 100; i += 10) {
-      await new Promise(resolve => setTimeout(resolve, 300));
-      res.write(`event: progress\ndata: ${JSON.stringify({ 
-        progress: i,
-        message: `Download em progresso... ${i}%`
-      })}\n\n`);
-    }
+    simulateProgress(3000, sendProgress);
 
-    // Envia URL de download quando concluído
-    const directUrl = await getDirectUrl(url);
-    res.write(`event: complete\ndata: ${JSON.stringify({
+    const direct = await getDirectUrl(url);
+    
+    res.write(`data: ${JSON.stringify({ 
       progress: 100,
-      download: directUrl,
-      message: 'Download concluído com sucesso'
+      download: direct,
+      message: 'URL de download obtida com sucesso'
     })}\n\n`);
+    res.end();
 
-    res.end();
   } catch (error) {
-    res.write(`event: error\ndata: ${JSON.stringify({
-      error: error.message,
-      details: 'Falha no download'
-    })}\n\n`);
-    res.end();
+    error.type = 'DOWNLOAD_ERROR';
+    error.details = 'Falha ao obter URL de download';
+    next(error);
   }
 });
 
@@ -332,7 +326,7 @@ app.post('/convert', async (req, res, next) => {
     res.setHeader('Connection', 'keep-alive');
 
     const sendProgress = (progress) => {
-      res.write(`event: progress\ndata: ${JSON.stringify({ progress })}\n\n`);
+      res.write(`data: ${JSON.stringify({ progress })}\n\n`);
     };
 
     // Simula progresso (substitua pela lógica real)
@@ -346,7 +340,7 @@ app.post('/convert', async (req, res, next) => {
     }
 
     // Envia o arquivo quando pronto
-    res.write(`event: complete\ndata: ${JSON.stringify({ 
+    res.write(`data: ${JSON.stringify({ 
       progress: 100,
       file: `converted.${format}`,
       status: 'ready'
@@ -417,7 +411,7 @@ app.use(errorHandler);
 
 // Inicialização do servidor
 app.listen(PORT, () => {
-  console.log(`Servidor Bdownload Is On porta ${PORT}`);
+  console.log(`Servidor Y2Mate rodando na porta ${PORT}`);
 });
 
 // Tratamento de erros não capturados
