@@ -236,36 +236,42 @@ app.post('/stream', async (req, res, next) => {
 
 app.post('/download', async (req, res, next) => {
   try {
-    const { url } = req.body;
-    if (!url) {
-      throw new Error('URL ausente');
+    const { url, format } = req.body;
+    if (!url || !format) {
+      throw new Error('URL e formato são obrigatórios');
     }
 
-    // Configura SSE para progresso
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    const sendProgress = (progress) => {
-      res.write(`data: ${JSON.stringify({ progress })}\n\n`);
-    };
+    // Envia progresso inicial
+    res.write('event: progress\ndata: {"progress": 0, "message": "Preparando download..."}\n\n');
 
     // Simula progresso (substitua pela lógica real)
-    simulateProgress(3000, sendProgress);
+    for (let i = 0; i <= 100; i += 10) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      res.write(`event: progress\ndata: ${JSON.stringify({ 
+        progress: i,
+        message: `Download em progresso... ${i}%`
+      })}\n\n`);
+    }
 
-    const direct = await getDirectUrl(url);
-    
-    res.write(`data: ${JSON.stringify({ 
+    // Envia URL de download quando concluído
+    const directUrl = await getDirectUrl(url);
+    res.write(`event: complete\ndata: ${JSON.stringify({
       progress: 100,
-      download: direct,
-      message: 'URL de download obtida com sucesso'
+      download: directUrl,
+      message: 'Download concluído com sucesso'
+    })}\n\n`);
+
+    res.end();
+  } catch (error) {
+    res.write(`event: error\ndata: ${JSON.stringify({
+      error: error.message,
+      details: 'Falha no download'
     })}\n\n`);
     res.end();
-
-  } catch (error) {
-    error.type = 'DOWNLOAD_ERROR';
-    error.details = 'Falha ao obter URL de download';
-    next(error);
   }
 });
 
@@ -326,9 +332,9 @@ app.post('/convert', async (req, res, next) => {
     res.setHeader('Connection', 'keep-alive');
 
     const sendProgress = (progress) => {
-      res.write(`data: ${JSON.stringify({ progress })}\n\n`);
-    };
-
+      res.write(`event: progress\ndata: ${JSON.stringify({ progress })}\n\n`);
+    
+    
     // Simula progresso (substitua pela lógica real)
     simulateProgress(5000, sendProgress);
 
