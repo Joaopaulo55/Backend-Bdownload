@@ -1,10 +1,10 @@
 const express = require('express');
 const cors = require('cors');
+const { exec } = require('child_process');
+const ffmpeg = require('fluent-ffmpeg');
+const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const path = require('path');
-const { v4: uuidv4 } = require('uuid');
-const ytdlp = require('yt-dlp-exec');
-const ffmpeg = require('fluent-ffmpeg');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -12,145 +12,87 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// 🔍 Buscar no YouTube
-app.get('/search', async (req, res) => {
-  const { query } = req.query;
-  if (!query) return res.status(400).json({ error: 'Query ausente' });
+const TMP_DIR = path.join(__dirname, 'downloads');
+if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR);
 
-  try {
-    const result = await ytdlp(query, {
-      dumpSingleJson: true,
-      flatPlaylist: true
-    });
+function sanitizeFilename(name) {
+  return name.replace(/[\/\\?%*:|"<>]/g, '-');
+}
 
-    if (result.entries) {
-      res.json(result.entries.slice(0, 10).map(video => ({
-        id: video.id,
-        title: video.title,
-        url: `https://www.youtube.com/watch?v=${video.id}`,
-        duration: video.duration,
-        is_playlist: true
-      })));
-    } else {
-      const formats = result.formats?.filter(f => f.vcodec && f.acodec);
-      const qualities = formats?.map(f => ({
-        resolution: f.format_note || f.height + 'p',
-        ext: f.ext,
-        format_id: f.format_id
-      }));
-      res.json({
-        id: result.id,
-        title: result.title,
-        url: result.webpage_url,
-        duration: result.duration,
-        thumbnail: result.thumbnail,
-        qualities
-      });
-    }
+// 🎧 Download MP3 real (não stream)
+app.get('/download/audio', (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).send("URL ausente");
 
-  } catch (err) {
-    res.status(500).json({ error: 'Erro na busca', detalhes: err.message });
-  }
+  const filename = `audio-${uuidv4()}.mp3`;
+  const filepath = path.join(TMP_DIR, filename);
+
+  const command = `yt-dlp -f bestaudio --extract-audio --audio-format mp3 -o "${filepath}" "${url}"`;
+
+  exec(command, (err) => {
+    if (err) return res.status(500).send("Erro no download");
+    res.download(filepath, () => fs.unlinkSync(filepath));
+  });
 });
 
-// 🎧 Download de áudio (com conversão para MP3)
-app.get('/download/audio', async (req, res) => {
-  const { url } = req.query;
-  if (!url) return res.status(400).json({ error: 'URL ausente' });
+// 🎞️ Download de vídeo com resolução personalizada (opcional)
+app.get('/download/video', (req, res) => {
+  const url = req.query.url;
+  const quality = req.query.quality || 'best';
+  if (!url) return res.status(400).send("URL ausente");
 
-  const tempFile = `/tmp/${uuidv4()}.webm`;
-  const outputFile = `/tmp/${uuidv4()}.mp3`;
+  const filename = `video-${uuidv4()}.mp4`;
+  const filepath = path.join(TMP_DIR, filename);
 
-  try {
-    await ytdlp.exec(url, {
-      output: tempFile,
-      extractAudio: true,
-      audioFormat: 'webm',
-      audioQuality: 0
-    });
+  const command = `yt-dlp -f ${quality} -o "${filepath}" "${url}"`;
 
-    ffmpeg(tempFile)
-      .audioBitrate(128)
-      .toFormat('mp3')
-      .on('end', () => {
-        res.download(outputFile, 'audio.mp3', () => {
-          fs.unlinkSync(tempFile);
-          fs.unlinkSync(outputFile);
-        });
-      })
-      .on('error', (err) => {
-        console.error(err);
-        res.status(500).json({ error: 'Erro na conversão para MP3' });
-      })
-      .save(outputFile);
-  } catch (err) {
-    res.status(500).json({ error: 'Erro ao baixar áudio', detalhes: err.message });
-  }
+  exec(command, (err) => {
+    if (err) return res.status(500).send("Erro no download");
+    res.download(filepath, () => fs.unlinkSync(filepath));
+  });
 });
 
-// 🎞️ Download de vídeo com qualidade específica
-app.get('/download/video', async (req, res) => {
-  const { url, quality } = req.query;
-  if (!url) return res.status(400).json({ error: 'URL ausente' });
+// 🔎 Buscar informações do vídeo (título, duração, qualidades)
+app.get('/search', (req, res) => {
+  const query = req.query.query;
+  if (!query) return res.status(400).send("Falta o parâmetro 'query'");
 
-  try {
-    res.header('Content-Disposition', `attachment; filename="video.mp4"`);
+  const command = `yt-dlp "ytsearch5:${query}" --dump-json`;
 
-    const process = ytdlp.raw(url, {
-      format: quality || 'bestvideo+bestaudio',
-      output: '-',
-      quiet: true
-    });
-
-    process.stdout.pipe(res);
-  } catch (err) {
-    res.status(500).json({ error: 'Erro ao baixar vídeo', detalhes: err.message });
-  }
+  exec(command, (err, stdout) => {
+    if (err) return res.status(500).send("Erro na busca");
+    const results = stdout.trim().split('\n').map(line => JSON.parse(line));
+    res.json(results.map(video => ({
+      title: video.title,
+      url: video.webpage_url,
+      duration: video.duration,
+      thumbnail: video.thumbnail
+    })));
+  });
 });
 
-// 📂 Download de playlist (áudio ou vídeo)
-app.get('/download/playlist', async (req, res) => {
-  const { url, type } = req.query;
-  if (!url) return res.status(400).json({ error: 'URL ausente' });
+// 📂 Suporte a links diretos de outras plataformas
+app.get('/download/universal', (req, res) => {
+  const url = req.query.url;
+  const format = req.query.format || 'video';
+  if (!url) return res.status(400).send("URL ausente");
 
-  const formatType = type === 'audio' ? 'bestaudio' : 'bestvideo+bestaudio';
+  const id = uuidv4();
+  const ext = format === 'audio' ? 'mp3' : 'mp4';
+  const output = path.join(TMP_DIR, `download-${id}.${ext}`);
 
-  try {
-    res.header('Content-Disposition', `attachment; filename="playlist.zip"`);
+  let command = `yt-dlp -o "${output}" `;
+  command += format === 'audio'
+    ? '--extract-audio --audio-format mp3 '
+    : '-f best ';
+  command += `"${url}"`;
 
-    const process = ytdlp.raw(url, {
-      format: formatType,
-      yesPlaylist: true,
-      output: '-',
-      quiet: true
-    });
-
-    process.stdout.pipe(res);
-  } catch (err) {
-    res.status(500).json({ error: 'Erro ao baixar playlist', detalhes: err.message });
-  }
-});
-
-// 🌐 Universal Download para qualquer site (sem busca)
-app.get('/download/universal', async (req, res) => {
-  const { url, format } = req.query;
-  if (!url) return res.status(400).json({ error: 'URL ausente' });
-
-  try {
-    res.setHeader('Content-Disposition', `attachment; filename="video.${format === 'audio' ? 'mp3' : 'mp4'}"`);
-
-    const process = ytdlp.raw(url, {
-      output: '-',
-      format: format === 'audio' ? 'bestaudio' : 'bestvideo+bestaudio',
-      quiet: true
-    });
-
-    process.stdout.pipe(res);
-  } catch (err) {
-    res.status(500).json({ error: 'Erro no download universal', detalhes: err.message });
-  }
+  exec(command, (err) => {
+    if (err) return res.status(500).send("Erro no download universal");
+    res.download(output, () => fs.unlinkSync(output));
+  });
 });
 
 app.listen(PORT, () => {
-  console.log(`🎥 Server 4.0 completo rodando na porta ${PORT}`);
+  console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
