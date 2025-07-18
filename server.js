@@ -3,9 +3,10 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
-const ytdlp = require('yt-dlp-exec');
+const YTDlpWrap = require('yt-dlp-wrap').default;
+const ytdlp = new YTDlpWrap();
 const ffmpeg = require('fluent-ffmpeg');
-
+// ... resto do código permanece igual
 const app = express();
 const PORT = process.env.PORT || 3001;
 

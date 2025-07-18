@@ -13,16 +13,6 @@ if [[ ! "$NODE_VERSION" =~ ^v20\. ]]; then
   exit 1
 fi
 
-# Configura Python/pip (necessário para yt-dlp)
-echo "🐍 Configurando Python..."
-if ! command -v python3 &> /dev/null; then
-  echo "❌ Python3 não encontrado. Instale Python3 antes de continuar."
-  exit 1
-fi
-
-python3 -m ensurepip --upgrade || echo "⚠️ Falha ao atualizar pip"
-python3 -m pip install --upgrade pip || echo "⚠️ Falha ao atualizar pip"
-
 # Instala dependências do Node
 echo "📦 Instalando dependências do Node.js..."
 npm install || {
@@ -69,7 +59,6 @@ fi
 echo "✅ Verificando instalações:"
 echo -n "Node: "; node -v
 echo -n "NPM: "; npm -v
-echo -n "Python: "; python3 --version || echo "❌"
 echo -n "ffmpeg: "; command -v ffmpeg && ffmpeg -version || echo "⚠️"
 
 echo "🚀 Setup concluído com sucesso!"
